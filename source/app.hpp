@@ -48,6 +48,7 @@ private:
     bool loadAccount();
     void loadHome();
     void refreshHomePage();
+    void loadRecent();
     void openSelected();
     void openPlaylist(uint64_t id, const std::string &name);
     void playSelectedFromPlaylist();
@@ -108,17 +109,20 @@ private:
     int tab_ = 0;
     std::vector<Song> daily_;
     std::vector<Playlist> playlists_;
+    std::vector<Song> recent_;
     int daily_sel_ = 0;
     int daily_scroll_ = 0;
     int playlist_sel_ = 0;
     int playlist_scroll_ = 0;
+    int recent_sel_ = 0;
+    int recent_scroll_ = 0;
 
     std::vector<Song> tracks_;
     std::string tracks_title_;
     int track_sel_ = 0;
     int track_scroll_ = 0;
     int playing_index_ = -1;
-    bool playing_playlist_ = false;
+    std::vector<Song> play_queue_;
 
     bool show_lyrics_ = false;
     uint64_t lyrics_song_ = 0;

@@ -235,6 +235,18 @@ void App::loadHome() {
     if (!ok) toast("加载失败，按 + 重试");
 }
 
+void App::loadRecent() {
+    redrawNow();
+    std::vector<Song> songs;
+    if (!api_.recentSongs(uid_, songs)) {
+        toast("最近播放加载失败");
+        return;
+    }
+    recent_ = songs;
+    recent_sel_ = 0;
+    recent_scroll_ = 0;
+}
+
 void App::refreshHomePage() {
     redrawNow();
     if (tab_ == 0) {
@@ -247,6 +259,9 @@ void App::refreshHomePage() {
         } else {
             toast("刷新失败");
         }
+    } else if (tab_ == 2) {
+        loadRecent();
+        toast("已刷新");
     } else if (tab_ == 1) {
         std::vector<Playlist> lists;
         if (api_.userPlaylists(uid_, lists)) {
@@ -263,13 +278,21 @@ void App::refreshHomePage() {
 void App::openSelected() {
     if (tab_ == 0) {
         if (daily_.empty()) return;
-        playing_playlist_ = false;
+        play_queue_ = daily_;
         playing_index_ = daily_sel_;
         playSong(daily_[daily_sel_]);
     } else if (tab_ == 1) {
         if (playlists_.empty()) return;
         const Playlist &p = playlists_[playlist_sel_];
         openPlaylist(p.id, p.name);
+    } else if (tab_ == 2) {
+        if (recent_.empty()) {
+            loadRecent();
+            return;
+        }
+        play_queue_ = recent_;
+        playing_index_ = recent_sel_;
+        playSong(recent_[recent_sel_]);
     } else {
         startSearch();
     }
@@ -287,13 +310,12 @@ void App::openPlaylist(uint64_t id, const std::string &name) {
     tracks_title_ = real_name.empty() ? name : real_name;
     track_sel_ = 0;
     track_scroll_ = 0;
-    playing_index_ = -1;
     screen_ = Screen::Playlist;
 }
 
 void App::playSelectedFromPlaylist() {
     if (tracks_.empty()) return;
-    playing_playlist_ = true;
+    play_queue_ = tracks_;
     playing_index_ = track_sel_;
     playSong(tracks_[track_sel_]);
 }
@@ -317,13 +339,12 @@ void App::playSong(const Song &song) {
 }
 
 void App::playAdjacent(int direction) {
-    const std::vector<Song> &list = playing_playlist_ ? tracks_ : daily_;
-    if (list.empty()) return;
+    if (play_queue_.empty()) return;
 
-    int count = (int)list.size();
+    int count = (int)play_queue_.size();
     if (playing_index_ < 0) playing_index_ = 0;
     playing_index_ = (playing_index_ + direction + count) % count;
-    playSong(list[playing_index_]);
+    playSong(play_queue_[playing_index_]);
 }
 
 void App::startSearch() {
@@ -347,7 +368,7 @@ void App::startSearch() {
     tracks_title_ = std::string("搜索：") + input;
     track_sel_ = 0;
     track_scroll_ = 0;
-    playing_playlist_ = true;
+    play_queue_ = tracks_;
     playing_index_ = -1;
     screen_ = Screen::Playlist;
 }
@@ -495,11 +516,12 @@ void App::handleTap(float x, float y) {
     }
 
     if (x < kSidebarWidth) {
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             int top = 118 + i * 58;
             if (y >= top - 10 && y <= top + 48) {
                 tab_ = i;
-                if (i == 2) startSearch();
+                if (i == 2 && recent_.empty()) loadRecent();
+                if (i == 3) startSearch();
                 return;
             }
         }
@@ -515,7 +537,7 @@ void App::handleTap(float x, float y) {
             int index = daily_scroll_ + row;
             if (index >= 0 && index < (int)daily_.size()) {
                 daily_sel_ = index;
-                playing_playlist_ = false;
+                play_queue_ = daily_;
                 playing_index_ = index;
                 playSong(daily_[index]);
             }
@@ -525,12 +547,20 @@ void App::handleTap(float x, float y) {
                 playlist_sel_ = index;
                 openPlaylist(playlists_[index].id, playlists_[index].name);
             }
+        } else if (tab_ == 2 && !recent_.empty()) {
+            int index = recent_scroll_ + row;
+            if (index >= 0 && index < (int)recent_.size()) {
+                recent_sel_ = index;
+                play_queue_ = recent_;
+                playing_index_ = index;
+                playSong(recent_[index]);
+            }
         }
     } else if (screen_ == Screen::Playlist && !tracks_.empty()) {
         int index = track_scroll_ + row;
         if (index >= 0 && index < (int)tracks_.size()) {
             track_sel_ = index;
-            playing_playlist_ = true;
+            play_queue_ = tracks_;
             playing_index_ = index;
             playSong(tracks_[index]);
         }
@@ -557,6 +587,9 @@ void App::handleDrag(float, float dy) {
         } else if (tab_ == 1 && !playlists_.empty()) {
             int max_scroll = std::max(0, (int)playlists_.size() - kVisibleRows);
             playlist_scroll_ = std::clamp(playlist_scroll_ + delta, 0, max_scroll);
+        } else if (tab_ == 2 && !recent_.empty()) {
+            int max_scroll = std::max(0, (int)recent_.size() - kVisibleRows);
+            recent_scroll_ = std::clamp(recent_scroll_ + delta, 0, max_scroll);
         }
     } else if (screen_ == Screen::Playlist && !tracks_.empty()) {
         int max_scroll = std::max(0, (int)tracks_.size() - kVisibleRows);
@@ -599,8 +632,14 @@ void App::pollInput() {
     if (screen_ == Screen::Login) {
         if (pressed(HidNpadButton_A) && clockSeconds() >= refresh_allowed_at_) startLogin();
     } else if (screen_ == Screen::Home) {
-        if (pressed(HidNpadButton_Left)) tab_ = (tab_ + 2) % 3;
-        if (pressed(HidNpadButton_Right)) tab_ = (tab_ + 1) % 3;
+        if (pressed(HidNpadButton_Left)) {
+            tab_ = (tab_ + 3) % 4;
+            if (tab_ == 2 && recent_.empty()) loadRecent();
+        }
+        if (pressed(HidNpadButton_Right)) {
+            tab_ = (tab_ + 1) % 4;
+            if (tab_ == 2 && recent_.empty()) loadRecent();
+        }
 
         if (tab_ == 0 && !daily_.empty()) {
             if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
@@ -618,6 +657,14 @@ void App::pollInput() {
                 playlist_sel_ = std::min((int)playlists_.size() - 1, playlist_sel_ + 1);
             }
             keepVisible(playlist_scroll_, playlist_sel_, kVisibleRows);
+        } else if (tab_ == 2 && !recent_.empty()) {
+            if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
+                recent_sel_ = std::max(0, recent_sel_ - 1);
+            }
+            if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
+                recent_sel_ = std::min((int)recent_.size() - 1, recent_sel_ + 1);
+            }
+            keepVisible(recent_scroll_, recent_sel_, kVisibleRows);
         }
 
         if (pressed(HidNpadButton_A)) openSelected();
@@ -651,8 +698,7 @@ void App::update() {
         double now = clockSeconds();
         if (now >= auto_next_at_) {
             auto_next_at_ = now + 2.0;
-            const std::vector<Song> &list = playing_playlist_ ? tracks_ : daily_;
-            if (!list.empty() && playing_index_ >= 0) playAdjacent(1);
+            if (!play_queue_.empty() && playing_index_ >= 0) playAdjacent(1);
         }
     }
 }
@@ -690,8 +736,8 @@ void App::drawSidebar() {
         ui_.text(32, 66, utf8Truncate(nickname_, 16), 16, kSub);
     }
 
-    const char *items[] = {"每日推荐", "我的歌单", "搜索"};
-    for (int i = 0; i < 3; ++i) {
+    const char *items[] = {"每日推荐", "我的歌单", "最近播放", "搜索"};
+    for (int i = 0; i < 4; ++i) {
         int y = 128 + i * 58;
         if (tab_ == i) {
             ui_.rect(16, y - 10, 268, 48, kRowSelected);
@@ -733,7 +779,10 @@ void App::drawHome() {
     ui_.rect(kSidebarWidth, 0, 1280 - kSidebarWidth, kNowBarY, kBg);
     drawSidebar();
 
-    const char *title = tab_ == 0 ? "每日推荐" : (tab_ == 1 ? "我的歌单" : "搜索");
+    const char *title = tab_ == 0 ? "每日推荐"
+                        : tab_ == 1 ? "我的歌单"
+                        : tab_ == 2 ? "最近播放"
+                                    : "搜索";
     ui_.text(340, 30, title, 26, kText);
     ui_.text(340, 66, tab_ == 2 ? "按 A 打开键盘输入关键词" : "按 + 刷新", 15, kSub);
 
@@ -772,6 +821,19 @@ void App::drawHome() {
         }
         drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows,
                       (int)playlists_.size(), playlist_scroll_);
+    } else if (tab_ == 2) {
+        if (recent_.empty()) {
+            ui_.text(340, kListTop + 20, "暂无最近播放，按 + 刷新", 18, kSub);
+            return;
+        }
+        for (int i = 0; i < kVisibleRows; ++i) {
+            int index = recent_scroll_ + i;
+            if (index >= (int)recent_.size()) break;
+            drawTrackRow(recent_[index], index, kListTop + i * kRowHeight,
+                         index == recent_sel_);
+        }
+        drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows,
+                      (int)recent_.size(), recent_scroll_);
     } else {
         ui_.text(340, kListTop + 20, "搜索歌曲、歌手或专辑", 18, kSub);
         ui_.text(340, kListTop + 52, "按 A 调出系统键盘", 16, kSub);

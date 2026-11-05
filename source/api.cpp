@@ -109,6 +109,21 @@ bool NetEaseApi::dailySongs(std::vector<Song> &out) {
     return !out.empty();
 }
 
+bool NetEaseApi::recentSongs(uint64_t uid, std::vector<Song> &out) {
+    auto j = post("/weapi/v1/play/record", {{"uid", uid}, {"type", 1}, {"csrf_token", csrf()}});
+    const nlohmann::json *items = nullptr;
+    if (j.contains("allData") && j["allData"].is_array()) items = &j["allData"];
+    else if (j.contains("weekData") && j["weekData"].is_array()) items = &j["weekData"];
+    if (!items) return false;
+
+    out.clear();
+    for (const auto &item : *items) {
+        if (!item.contains("song") || !item["song"].is_object()) continue;
+        out.push_back(parseSong(item["song"]));
+    }
+    return !out.empty();
+}
+
 bool NetEaseApi::userPlaylists(uint64_t uid, std::vector<Playlist> &out) {
     auto j = post("/weapi/user/playlist",
                   {{"uid", uid},
