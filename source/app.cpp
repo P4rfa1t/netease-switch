@@ -219,8 +219,16 @@ void App::pollLogin() {
     if (code == 803) {
         std::string cookie = http_.cookie("MUSIC_U");
         if (cookie.empty()) cookie = api_.musicU();
+        logf("[login] authorized, MUSIC_U len=%d", (int)cookie.size());
         if (!cookie.empty()) api_.setMusicU(cookie);
-        if (loadAccount()) {
+        uint64_t uid = 0;
+        std::string nick;
+        bool ok = api_.account(uid, nick);
+        logf("[login] account ok=%d uid=%llu nick=%s", (int)ok, (unsigned long long)uid,
+             nick.c_str());
+        if (ok) {
+            uid_ = uid;
+            nickname_ = nick;
             toast("登录成功");
             loadHome();
         } else {
