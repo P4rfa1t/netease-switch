@@ -86,7 +86,7 @@ bool App::init() {
     romfsInit();
     plInitialize(PlServiceType_User);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         logf("[app] SDL_Init failed: %s", SDL_GetError());
         return false;
     }
@@ -104,15 +104,9 @@ bool App::init() {
 
     player_.init();
 
-    SDL_GameControllerEventState(SDL_ENABLE);
-    int joysticks = SDL_NumJoysticks();
-    for (int i = 0; i < joysticks; ++i) {
-        if (SDL_IsGameController(i)) {
-            controller_ = SDL_GameControllerOpen(i);
-            if (controller_) break;
-        }
-    }
-    logf("[app] controller: %s", controller_ ? SDL_GameControllerName(controller_) : "none");
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    padInitializeDefault(&pad_);
+    logf("[app] input: libnx pad");
 
     if (!ui_.init(renderer_)) return false;
 
@@ -129,7 +123,6 @@ bool App::init() {
 
 void App::shutdown() {
     player_.shutdown();
-    if (controller_) SDL_GameControllerClose(controller_);
     ui_.shutdown();
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_) SDL_DestroyWindow(window_);
@@ -184,7 +177,7 @@ void App::startLogin() {
     }
     net_error_.clear();
     qr_url_ = "https://music.163.com/login?codekey=" + qr_key_;
-    qr_code_ = 800;
+    qr_code_ = 801;
     next_qr_poll_ = clockSeconds() + 2.0;
     logf("[login] qr created");
 }
@@ -214,7 +207,7 @@ void App::pollLogin() {
             toast("登录状态获取失败");
             startLogin();
         }
-    } else if (code == 802) {
+    } else if (code == 800) {
         qr_key_.clear();
     }
 }
@@ -414,35 +407,34 @@ void App::toast(const std::string &message) {
     logf("[toast] %s", message.c_str());
 }
 
-bool App::pressedRepeat(SDL_GameControllerButton button) {
-    if (!current_[button]) {
-        repeat_next_[button] = 0;
+bool App::pressedRepeat(uint64_t button, double &next_time) {
+    if (!(held_ & button)) {
+        next_time = 0;
         return false;
     }
     double now = clockSeconds();
-    if (!previous_[button]) {
-        repeat_next_[button] = now + 0.35;
+    if (down_ & button) {
+        next_time = now + 0.35;
         return true;
     }
-    if (now >= repeat_next_[button]) {
-        repeat_next_[button] = now + 0.08;
+    if (now >= next_time) {
+        next_time = now + 0.08;
         return true;
     }
     return false;
 }
 
 void App::pollInput() {
-    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
-        current_[i] = controller_ &&
-                      SDL_GameControllerGetButton(controller_, (SDL_GameControllerButton)i) != 0;
-    }
+    padUpdate(&pad_);
+    down_ = padGetButtonsDown(&pad_);
+    held_ = padGetButtons(&pad_);
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) running_ = false;
     }
 
-    if (pressed(SDL_CONTROLLER_BUTTON_B)) {
+    if (pressed(HidNpadButton_B)) {
         if (show_lyrics_) {
             show_lyrics_ = false;
         } else if (screen_ == Screen::Playlist) {
@@ -450,72 +442,60 @@ void App::pollInput() {
         }
     }
 
-    if (pressed(SDL_CONTROLLER_BUTTON_X)) player_.togglePause();
-    if (pressed(SDL_CONTROLLER_BUTTON_Y)) {
+    if (pressed(HidNpadButton_X)) player_.togglePause();
+    if (pressed(HidNpadButton_Y)) {
         if (lyrics_.empty()) {
             toast("当前歌曲暂无歌词");
         } else {
             show_lyrics_ = !show_lyrics_;
         }
     }
-    if (pressed(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) playAdjacent(-1);
-    if (pressed(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) playAdjacent(1);
-
-    double now = clockSeconds();
-    if (controller_ && now >= trigger_cooldown_) {
-        int zl = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-        int zr = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
-        if (zl > 16000) {
-            player_.adjustVolume(-0.05f);
-            trigger_cooldown_ = now + 0.12;
-        } else if (zr > 16000) {
-            player_.adjustVolume(0.05f);
-            trigger_cooldown_ = now + 0.12;
-        }
-    }
+    if (pressed(HidNpadButton_L)) playAdjacent(-1);
+    if (pressed(HidNpadButton_R)) playAdjacent(1);
+    if (pressedRepeat(HidNpadButton_ZL, repeat_vol_down_next_)) player_.adjustVolume(-0.05f);
+    if (pressedRepeat(HidNpadButton_ZR, repeat_vol_up_next_)) player_.adjustVolume(0.05f);
 
     if (screen_ == Screen::Login) {
-        if (pressed(SDL_CONTROLLER_BUTTON_A) && qr_key_.empty()) startLogin();
+        bool can_refresh = qr_key_.empty() || qr_code_ == 800 || qr_code_ == -1;
+        if (pressed(HidNpadButton_A) && can_refresh) startLogin();
     } else if (screen_ == Screen::Home) {
-        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) tab_ = (tab_ + 2) % 3;
-        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) tab_ = (tab_ + 1) % 3;
+        if (pressed(HidNpadButton_Left)) tab_ = (tab_ + 2) % 3;
+        if (pressed(HidNpadButton_Right)) tab_ = (tab_ + 1) % 3;
 
         if (tab_ == 0 && !daily_.empty()) {
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+            if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
                 daily_sel_ = std::max(0, daily_sel_ - 1);
             }
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+            if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
                 daily_sel_ = std::min((int)daily_.size() - 1, daily_sel_ + 1);
             }
             keepVisible(daily_scroll_, daily_sel_, kVisibleRows);
         } else if (tab_ == 1 && !playlists_.empty()) {
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+            if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
                 playlist_sel_ = std::max(0, playlist_sel_ - 1);
             }
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+            if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
                 playlist_sel_ = std::min((int)playlists_.size() - 1, playlist_sel_ + 1);
             }
             keepVisible(playlist_scroll_, playlist_sel_, kVisibleRows);
         }
 
-        if (pressed(SDL_CONTROLLER_BUTTON_A)) openSelected();
-        if (pressed(SDL_CONTROLLER_BUTTON_START)) refreshHomePage();
+        if (pressed(HidNpadButton_A)) openSelected();
+        if (pressed(HidNpadButton_Plus)) refreshHomePage();
     } else if (screen_ == Screen::Playlist) {
         if (!tracks_.empty()) {
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+            if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
                 track_sel_ = std::max(0, track_sel_ - 1);
             }
-            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+            if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
                 track_sel_ = std::min((int)tracks_.size() - 1, track_sel_ + 1);
             }
             keepVisible(track_scroll_, track_sel_, kVisibleRows);
         }
-        if (pressed(SDL_CONTROLLER_BUTTON_A)) playSelectedFromPlaylist();
-        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) player_.seek(player_.position() - 10.0);
-        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) player_.seek(player_.position() + 10.0);
+        if (pressed(HidNpadButton_A)) playSelectedFromPlaylist();
+        if (pressed(HidNpadButton_Left)) player_.seek(player_.position() - 10.0);
+        if (pressed(HidNpadButton_Right)) player_.seek(player_.position() + 10.0);
     }
-
-    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) previous_[i] = current_[i];
 }
 
 void App::update() {
@@ -582,7 +562,7 @@ void App::drawSidebar() {
 
     ui_.text(32, 520, "A 确认   B 返回", 15, kSub);
     ui_.text(32, 544, "X 暂停   Y 歌词", 15, kSub);
-    ui_.text(32, 568, "L/R 切歌  +/- 音量", 15, kSub);
+    ui_.text(32, 568, "L/R 切歌  ZL/ZR 音量", 15, kSub);
 }
 
 void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
@@ -784,9 +764,9 @@ void App::drawLogin() {
 
     std::string status;
     switch (qr_code_) {
-    case 800: status = "请使用网易云音乐 App 扫描二维码"; break;
-    case 801: status = "已扫描，请在手机上确认登录"; break;
-    case 802: status = "二维码已过期，按 A 刷新"; break;
+    case 800: status = "二维码已过期，按 A 刷新"; break;
+    case 801: status = "请使用网易云音乐 App 扫描二维码"; break;
+    case 802: status = "已扫描，请在手机上确认登录"; break;
     case 803: status = "登录成功"; break;
     case -1: status = "网络异常，2 秒后重试"; break;
     default: status = "正在获取二维码…"; break;

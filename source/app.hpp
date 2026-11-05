@@ -31,11 +31,9 @@ private:
     void loopFrame();
 
     void pollInput();
-    bool held(SDL_GameControllerButton button) const { return current_[button]; }
-    bool pressed(SDL_GameControllerButton button) const {
-        return current_[button] && !previous_[button];
-    }
-    bool pressedRepeat(SDL_GameControllerButton button);
+    bool held(uint64_t button) const { return (held_ & button) != 0; }
+    bool pressed(uint64_t button) const { return (down_ & button) != 0; }
+    bool pressedRepeat(uint64_t button, double &next_time);
 
     void update();
     void draw();
@@ -73,13 +71,15 @@ private:
 
     SDL_Window *window_ = nullptr;
     SDL_Renderer *renderer_ = nullptr;
-    SDL_GameController *controller_ = nullptr;
+    PadState pad_{};
     bool running_ = true;
 
-    bool current_[SDL_CONTROLLER_BUTTON_MAX]{};
-    bool previous_[SDL_CONTROLLER_BUTTON_MAX]{};
-    double repeat_next_[SDL_CONTROLLER_BUTTON_MAX]{};
-    double trigger_cooldown_ = 0;
+    uint64_t down_ = 0;
+    uint64_t held_ = 0;
+    double repeat_up_next_ = 0;
+    double repeat_down_next_ = 0;
+    double repeat_vol_up_next_ = 0;
+    double repeat_vol_down_next_ = 0;
 
     Screen screen_ = Screen::Login;
 
