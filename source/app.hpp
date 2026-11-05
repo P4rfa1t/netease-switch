@@ -166,6 +166,7 @@ private:
 
     std::vector<Song> tracks_;
     std::string tracks_title_;
+    std::string tracks_cover_;
     int track_sel_ = 0;
     int track_scroll_ = 0;
     int playing_index_ = -1;

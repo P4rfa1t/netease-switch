@@ -561,6 +561,13 @@ void App::openPlaylist(uint64_t id, const std::string &name) {
     }
     tracks_ = songs;
     tracks_title_ = real_name.empty() ? name : real_name;
+    tracks_cover_.clear();
+    for (const auto &pl : playlists_) {
+        if (pl.id == id) { tracks_cover_ = pl.cover_url; break; }
+    }
+    for (const auto &pl : discover_playlists_) {
+        if (pl.id == id) { tracks_cover_ = pl.cover_url; break; }
+    }
     if (id == liked_playlist_id_) {
         liked_ids_.clear();
         for (const auto &song : tracks_) liked_ids_.insert(song.id);
@@ -1424,28 +1431,71 @@ void App::drawHome() {
 }
 
 void App::drawPlaylist() {
-    int left = sidebarWidth();
-    ui_.rect(left, 0, 1280 - left, kNowBarY, kBg);
+    ui_.rect(0, 0, 1280, 720, kBg);
     drawTopBar();
 
-    ui_.text(contentX(), 28, utf8Truncate(tracks_title_, 26), 26, kText);
-    char count[64];
-    snprintf(count, sizeof(count), "%d 首    B 返回", (int)tracks_.size());
-    ui_.text(contentX(), 66, count, 14, kSub);
+    // ---- header block: cover + title + count + action buttons ----
+    ui_.rect(0, kTopBarHeight, 1280, 190, rgba(255, 255, 255, 8));
 
+    drawCover(tracks_cover_, 56, 112, 150, 150);
+    ui_.text(230, 122, utf8Truncate(tracks_title_, 22), 32, kText);
+
+    char count[64];
+    snprintf(count, sizeof(count), "%d 首", (int)tracks_.size());
+    ui_.text(230, 172, count, 17, kSub);
+
+    // Action pills.
+    const char *actions[] = {"播放全部", "心动模式", "氛围听"};
+    int ax = 640;
+    for (int i = 0; i < 3; ++i) {
+        int w = ui_.textWidth(actions[i], 16) + 56;
+        ui_.rect(ax, 150, w, 46, i == 0 ? rgba(255, 58, 58, 220) : rgba(255, 255, 255, 30));
+        ui_.textCentered(ax + w / 2, 161, actions[i], 16, kText);
+        ax += w + 18;
+    }
+
+    // ---- two-column track list ----
     if (tracks_.empty()) {
-        ui_.text(contentX(), kListTop + 20, "暂无歌曲", 18, kSub);
+        ui_.text(56, 330, "暂无歌曲", 20, kHint);
         return;
     }
 
-    for (int i = 0; i < kVisibleRows; ++i) {
-        int index = track_scroll_ + i;
+    const int rows_per_page = 4;          // 4 rows x 2 columns = 8 per page
+    int total_pages = ((int)tracks_.size() + rows_per_page * 2 - 1) / (rows_per_page * 2);
+    int page = track_sel_ / (rows_per_page * 2);
+    int page_start = page * rows_per_page * 2;
+
+    for (int i = 0; i < rows_per_page * 2; ++i) {
+        int index = page_start + i;
         if (index >= (int)tracks_.size()) break;
-        drawTrackRow(tracks_[index], index, kListTop + i * kRowHeight, index == track_sel_);
+
+        int col = i / rows_per_page;
+        int row = i % rows_per_page;
+        int x = 56 + col * 600;
+        int y = 320 + row * 88;
+
+        const Song &song = tracks_[index];
+        bool sel = index == track_sel_;
+
+        if (sel) {
+            ui_.rect(x - 14, y - 6, 580, 80, rgba(255, 58, 58, 40));
+        }
+
+        // Index number on the left, dimmed.
+        char num[16];
+        snprintf(num, sizeof(num), "%d", index + 1);
+        ui_.textRight(x + 12, y + 26, num, 20, sel ? kText : kHint);
+
+        ui_.text(x + 34, y + 4, utf8Truncate(song.name, 22), 24, sel ? kText : kTextDim);
+        ui_.text(x + 34, y + 40, utf8Truncate(song.artist, 26), 15, kSub);
     }
 
-    drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows, (int)tracks_.size(),
-                  track_scroll_);
+    // ---- pagination ----
+    char page_text[48];
+    snprintf(page_text, sizeof(page_text), "%d / %d", page + 1, total_pages > 0 ? total_pages : 1);
+    ui_.textCentered(640 - 30, 686, "<", 20, kSub);
+    ui_.textCentered(640, 686, page_text, 18, kSub);
+    ui_.textCentered(640 + 30, 686, ">", 20, kSub);
 }
 
 void App::drawNowBar() {
