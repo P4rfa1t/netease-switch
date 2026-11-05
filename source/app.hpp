@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,8 @@ private:
     void loadRecent();
     void loadToplists();
     void ensureTabLoaded();
+    void ensureLikedIds();
+    void toggleLikeCurrent();
     void openSelected();
     void openPlaylist(uint64_t id, const std::string &name);
     void playSelectedFromPlaylist();
@@ -118,6 +121,9 @@ private:
     int liked_track_count_ = 0;
     int top_sel_ = 0;
     int top_scroll_ = 0;
+    std::set<uint64_t> liked_ids_;
+    bool liked_ids_loaded_ = false;
+    uint64_t current_song_id_ = 0;
     int daily_sel_ = 0;
     int daily_scroll_ = 0;
     int playlist_sel_ = 0;

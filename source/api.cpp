@@ -214,6 +214,14 @@ bool NetEaseApi::lyric(uint64_t id, std::string &lrc) {
     return !lrc.empty();
 }
 
+bool NetEaseApi::likeSong(uint64_t id, bool like) {
+    auto j = post("/weapi/song/like",
+                  {{"trackId", std::to_string(id)},
+                   {"like", like ? "true" : "false"},
+                   {"csrf_token", csrf()}});
+    return j.value("code", 0) == 200;
+}
+
 bool NetEaseApi::search(const std::string &keyword, std::vector<Song> &out) {
     auto j = post("/weapi/cloudsearch/pc",
                   {{"s", keyword},

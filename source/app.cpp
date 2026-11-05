@@ -269,6 +269,47 @@ void App::loadToplists() {
     top_scroll_ = 0;
 }
 
+void App::ensureLikedIds() {
+    if (liked_ids_loaded_ || liked_playlist_id_ == 0) return;
+    redrawNow();
+    std::vector<Song> songs;
+    std::string name;
+    if (!api_.playlistDetail(liked_playlist_id_, songs, name)) return;
+    liked_ids_.clear();
+    for (const auto &song : songs) liked_ids_.insert(song.id);
+    liked_ids_loaded_ = true;
+}
+
+void App::toggleLikeCurrent() {
+    if (current_song_id_ == 0) {
+        toast("当前没有播放歌曲");
+        return;
+    }
+    if (liked_playlist_id_ == 0) {
+        toast("未找到我喜欢的音乐");
+        return;
+    }
+
+    redrawNow();
+    ensureLikedIds();
+
+    bool liked = liked_ids_.count(current_song_id_) != 0;
+    bool target = !liked;
+    if (!api_.likeSong(current_song_id_, target)) {
+        toast("操作失败，请稍后重试");
+        return;
+    }
+
+    if (target) {
+        liked_ids_.insert(current_song_id_);
+        if (liked_track_count_ >= 0) ++liked_track_count_;
+    } else {
+        liked_ids_.erase(current_song_id_);
+        if (liked_track_count_ > 0) --liked_track_count_;
+    }
+    toast(target ? "已加入我喜欢的音乐" : "已取消喜欢");
+}
+
 void App::ensureTabLoaded() {
     if (tab_ == 3 && recent_.empty()) loadRecent();
     else if (tab_ == 4 && toplists_.empty()) loadToplists();
@@ -358,6 +399,11 @@ void App::openPlaylist(uint64_t id, const std::string &name) {
     }
     tracks_ = songs;
     tracks_title_ = real_name.empty() ? name : real_name;
+    if (id == liked_playlist_id_) {
+        liked_ids_.clear();
+        for (const auto &song : tracks_) liked_ids_.insert(song.id);
+        liked_ids_loaded_ = true;
+    }
     track_sel_ = 0;
     track_scroll_ = 0;
     screen_ = Screen::Playlist;
@@ -382,6 +428,7 @@ void App::playSong(const Song &song) {
     }
 
     player_.play(url, song.name, song.artist);
+    current_song_id_ = song.id;
     loadLyrics(song.id);
     show_lyrics_ = false;
     last_player_error_.clear();
@@ -557,10 +604,12 @@ void App::handleTap(float x, float y) {
     if (y >= kNowBarY) {
         if (x >= 24 && x <= 112 && y >= 640) {
             player_.togglePause();
-        } else if (x >= 420 && x <= 1100 && y >= 660 && y <= 700) {
+        } else if (x >= 420 && x <= 980 && y >= 660 && y <= 700) {
             double total = player_.duration();
-            if (total > 0) player_.seek(((x - 420.0) / 680.0) * total);
-        } else if (x >= 1120 && y >= 640) {
+            if (total > 0) player_.seek(((x - 420.0) / 560.0) * total);
+        } else if (x >= 1000 && x <= 1076 && y >= 640) {
+            toggleLikeCurrent();
+        } else if (x >= 1100 && y >= 640) {
             if (lyrics_.empty()) toast("当前歌曲暂无歌词");
             else show_lyrics_ = true;
         } else if (x >= 120 && x <= 420) {
@@ -702,6 +751,7 @@ void App::pollInput() {
     if (pressed(HidNpadButton_R)) playAdjacent(1);
     if (pressedRepeat(HidNpadButton_ZL, repeat_vol_down_next_)) player_.adjustVolume(-0.05f);
     if (pressedRepeat(HidNpadButton_ZR, repeat_vol_up_next_)) player_.adjustVolume(0.05f);
+    if (pressed(HidNpadButton_StickR)) toggleLikeCurrent();
     if (pressed(HidNpadButton_Minus)) {
         play_mode_ = play_mode_ == PlayMode::Sequential ? PlayMode::RepeatOne
                      : play_mode_ == PlayMode::RepeatOne ? PlayMode::Shuffle
@@ -839,6 +889,7 @@ void App::drawSidebar() {
     ui_.text(32, 500, "A 确认   B 返回", 15, kSub);
     ui_.text(32, 524, "X 暂停   Y 歌词", 15, kSub);
     ui_.text(32, 548, "L/R 切歌  ZL/ZR 音量", 15, kSub);
+    ui_.text(32, 572, "R3 红心  - 播放模式", 15, kSub);
 }
 
 void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
@@ -1025,7 +1076,7 @@ void App::drawNowBar() {
     ratio = std::clamp(ratio, 0.0, 1.0);
 
     int bar_x = 420;
-    int bar_w = 680;
+    int bar_w = 560;
     int bar_y = kNowBarY + 40;
     ui_.rect(bar_x, bar_y, bar_w, 6, rgba(60, 60, 68));
     ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 6, kAccent);
@@ -1033,9 +1084,13 @@ void App::drawNowBar() {
     ui_.text(bar_x, bar_y + 12, formatTime(position), 14, kSub);
     ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 14, kSub);
 
-    ui_.rect(1120, 644, 120, 52, rgba(52, 52, 62));
-    ui_.textCentered(1180, 658, "歌词", 19, kText);
-    ui_.textCentered(1180, 682, "Y", 12, kSub);
+    bool liked = current_song_id_ != 0 && liked_ids_.count(current_song_id_) != 0;
+    ui_.rect(1000, 644, 76, 52, liked ? kAccent : rgba(52, 52, 62));
+    ui_.textCentered(1038, 658, liked ? "已喜欢" : "喜欢", 15, kText);
+
+    ui_.rect(1100, 644, 140, 52, rgba(52, 52, 62));
+    ui_.textCentered(1170, 658, "歌词", 19, kText);
+    ui_.textCentered(1170, 682, "Y", 12, kSub);
 }
 
 void App::drawLyrics() {

@@ -49,6 +49,7 @@ public:
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
     bool songUrl(uint64_t id, std::string &url, std::string &error);
     bool lyric(uint64_t id, std::string &lrc);
+    bool likeSong(uint64_t id, bool like);
     bool search(const std::string &keyword, std::vector<Song> &out);
 
     static Song parseSong(const nlohmann::json &j);
