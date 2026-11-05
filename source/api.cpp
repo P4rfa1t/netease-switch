@@ -154,6 +154,26 @@ bool NetEaseApi::userPlaylists(uint64_t uid, std::vector<Playlist> &out) {
     return !out.empty();
 }
 
+bool NetEaseApi::recommendPlaylists(std::vector<Playlist> &out) {
+    auto j = post("/weapi/personalized/playlist",
+                  {{"limit", 30}, {"total", true}, {"n", 1000}, {"csrf_token", csrf()}});
+    const nlohmann::json *items = nullptr;
+    if (j.contains("result") && j["result"].is_array()) items = &j["result"];
+    else if (j.contains("playlists") && j["playlists"].is_array()) items = &j["playlists"];
+    if (!items) return false;
+
+    out.clear();
+    for (const auto &item : *items) {
+        Playlist p;
+        p.id = item.value("id", (uint64_t)0);
+        p.name = item.value("name", "");
+        p.track_count = item.value("trackCount", 0);
+        p.creator = item.value("copywriter", "");
+        if (p.id != 0) out.push_back(p);
+    }
+    return !out.empty();
+}
+
 bool NetEaseApi::toplists(std::vector<Playlist> &out) {
     auto j = post("/weapi/toplist", {{"csrf_token", csrf()}});
     const nlohmann::json *items = nullptr;

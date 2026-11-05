@@ -52,8 +52,13 @@ private:
     void refreshHomePage();
     void loadRecent();
     void loadToplists();
+    void loadRecommend();
     void ensureTabLoaded();
     void ensureLikedIds();
+    void toggleSidebar();
+    int sidebarWidth() const;
+    int contentX() const;
+    int contentWidth() const;
     void loadCover(const Song &song);
     void cycleQuality();
     void toggleLikeCurrent();
@@ -91,6 +96,7 @@ private:
     bool touch_dragged_ = false;
     float touch_last_x_ = 0;
     float touch_last_y_ = 0;
+    float touch_start_x_ = 0;
     float touch_start_y_ = 0;
     float touch_move_ = 0;
     float drag_accum_ = 0;
@@ -119,6 +125,9 @@ private:
     std::vector<Playlist> playlists_;
     std::vector<Song> recent_;
     std::vector<Playlist> toplists_;
+    std::vector<Playlist> recommend_;
+    int rec_sel_ = 0;
+    int rec_scroll_ = 0;
     uint64_t liked_playlist_id_ = 0;
     int liked_track_count_ = 0;
     int top_sel_ = 0;
@@ -144,6 +153,8 @@ private:
     std::vector<Song> play_queue_;
 
     PlayMode play_mode_ = PlayMode::Sequential;
+    bool sidebar_collapsed_ = false;
+    bool sidebar_focus_ = false;
     bool show_lyrics_ = false;
     uint64_t lyrics_song_ = 0;
     std::vector<LyricLine> lyrics_;

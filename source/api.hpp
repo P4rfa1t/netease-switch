@@ -47,6 +47,7 @@ public:
     bool recentSongs(uint64_t uid, std::vector<Song> &out);
     bool userPlaylists(uint64_t uid, std::vector<Playlist> &out);
     bool toplists(std::vector<Playlist> &out);
+    bool recommendPlaylists(std::vector<Playlist> &out);
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
     bool songUrl(uint64_t id, int br, std::string &url, std::string &error);
     bool lyric(uint64_t id, std::string &lrc);
