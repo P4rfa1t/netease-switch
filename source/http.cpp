@@ -141,6 +141,8 @@ HttpResult HttpClient::postForm(const std::string &url, const std::string &body)
     curl_easy_setopt(curl_, CURLOPT_HEADERDATA, this);
 
     curl_slist *list = curl_slist_append(nullptr, "Content-Type: application/x-www-form-urlencoded");
+    list = curl_slist_append(list, "Accept: */*");
+    list = curl_slist_append(list, "Origin: https://music.163.com");
     std::string cookie = cookieHeader();
     if (!cookie.empty()) list = curl_slist_append(list, ("Cookie: " + cookie).c_str());
     curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, list);

@@ -114,6 +114,7 @@ private:
     std::string toast_text_;
     double toast_until_ = 0;
     double auto_next_at_ = 0;
+    double refresh_allowed_at_ = 0;
     std::string last_player_error_;
 };
 

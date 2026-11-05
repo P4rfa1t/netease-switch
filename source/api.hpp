@@ -26,7 +26,12 @@ struct Playlist {
 
 class NetEaseApi {
 public:
-    explicit NetEaseApi(HttpClient &http) : http_(http) {}
+    explicit NetEaseApi(HttpClient &http) : http_(http) {
+        // The web login flow expects a desktop client fingerprint.
+        if (http_.cookie("os").empty()) http_.setCookie("os", "pc");
+        if (http_.cookie("appver").empty()) http_.setCookie("appver", "2.7.1.198277");
+        if (http_.cookie("__remember_me").empty()) http_.setCookie("__remember_me", "true");
+    }
 
     std::string csrf() const;
     bool loggedIn() const;

@@ -169,6 +169,8 @@ void App::startLogin() {
     qr_url_.clear();
     qr_code_ = 0;
 
+    refresh_allowed_at_ = clockSeconds() + 5.0;
+
     if (!api_.qrCreate(qr_key_)) {
         int rc = dnsProbe("music.163.com");
         net_error_ = dnsErrorMessage(rc) + " (" + std::to_string(rc) + ")";
@@ -208,6 +210,9 @@ void App::pollLogin() {
             startLogin();
         }
     } else if (code == 800) {
+        qr_key_.clear();
+    } else if (code != 801 && code != 802) {
+        logf("[login] unexpected code %d", code);
         qr_key_.clear();
     }
 }
@@ -456,8 +461,7 @@ void App::pollInput() {
     if (pressedRepeat(HidNpadButton_ZR, repeat_vol_up_next_)) player_.adjustVolume(0.05f);
 
     if (screen_ == Screen::Login) {
-        bool can_refresh = qr_key_.empty() || qr_code_ == 800 || qr_code_ == -1;
-        if (pressed(HidNpadButton_A) && can_refresh) startLogin();
+        if (pressed(HidNpadButton_A) && clockSeconds() >= refresh_allowed_at_) startLogin();
     } else if (screen_ == Screen::Home) {
         if (pressed(HidNpadButton_Left)) tab_ = (tab_ + 2) % 3;
         if (pressed(HidNpadButton_Right)) tab_ = (tab_ + 1) % 3;
@@ -769,17 +773,28 @@ void App::drawLogin() {
     case 802: status = "已扫描，请在手机上确认登录"; break;
     case 803: status = "登录成功"; break;
     case -1: status = "网络异常，2 秒后重试"; break;
-    default: status = "正在获取二维码…"; break;
+    default:
+        status = qr_code_ > 803 ? ("登录失败（" + std::to_string(qr_code_) + "），按 A 刷新")
+                                : "正在获取二维码…";
+        break;
     }
     ui_.textCentered(640, 556, status, 20, kText);
 
     if (!net_error_.empty()) {
         ui_.textCentered(640, 590, net_error_, 16, kAccent);
-        ui_.textCentered(640, 614, "按 A 重新获取二维码", 15, kSub);
     } else if (qr_key_.empty()) {
-        ui_.textCentered(640, 590, "网络连接失败，按 A 重试", 16, kAccent);
+        ui_.textCentered(640, 590, "按 A 重新获取二维码", 16, kAccent);
     } else {
         ui_.textCentered(640, 590, "二维码有效期约 5 分钟", 15, kSub);
+    }
+
+    double remain = refresh_allowed_at_ - clockSeconds();
+    if (remain > 0.0) {
+        char hint[64];
+        snprintf(hint, sizeof(hint), "A 刷新（%d 秒后可用）", (int)std::ceil(remain));
+        ui_.textCentered(640, 620, hint, 14, kSub);
+    } else {
+        ui_.textCentered(640, 620, "按 A 刷新二维码", 14, kSub);
     }
 }
 
