@@ -106,7 +106,8 @@ bool App::init() {
 
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     padInitializeDefault(&pad_);
-    logf("[app] input: libnx pad");
+    hidInitializeTouchScreen();
+    logf("[app] input: libnx pad + touch");
 
     if (!ui_.init(renderer_)) return false;
 
@@ -429,7 +430,142 @@ bool App::pressedRepeat(uint64_t button, double &next_time) {
     return false;
 }
 
+void App::pollTouch() {
+    HidTouchScreenState state{};
+    size_t count = hidGetTouchScreenStates(&state, 1);
+    bool down = count > 0;
+
+    if (down) {
+        const HidTouchState &touch = state.touches[0];
+        float x = (float)touch.x;
+        float y = (float)touch.y;
+
+        if (!touch_active_) {
+            touch_active_ = true;
+            touch_dragged_ = false;
+            touch_move_ = 0;
+            touch_last_x_ = x;
+            touch_last_y_ = y;
+            touch_start_y_ = y;
+            touch_start_time_ = clockSeconds();
+            drag_accum_ = 0;
+        } else {
+            float dx = x - touch_last_x_;
+            float dy = y - touch_last_y_;
+            touch_move_ += std::fabs(dx) + std::fabs(dy);
+            if (touch_move_ > 16.0f) touch_dragged_ = true;
+            if (touch_dragged_) handleDrag(dx, dy);
+            touch_last_x_ = x;
+            touch_last_y_ = y;
+        }
+    } else if (touch_active_) {
+        touch_active_ = false;
+        double duration = clockSeconds() - touch_start_time_;
+        if (!touch_dragged_ && duration < 0.7) handleTap(touch_last_x_, touch_last_y_);
+    }
+}
+
+void App::handleTap(float x, float y) {
+    if (show_lyrics_) {
+        show_lyrics_ = false;
+        return;
+    }
+
+    if (y >= kNowBarY) {
+        if (x >= 24 && x <= 112 && y >= 640) {
+            player_.togglePause();
+        } else if (x >= 420 && x <= 1100 && y >= 660 && y <= 700) {
+            double total = player_.duration();
+            if (total > 0) player_.seek(((x - 420.0) / 680.0) * total);
+        } else if (x >= 1120 && y >= 640) {
+            if (lyrics_.empty()) toast("当前歌曲暂无歌词");
+            else show_lyrics_ = true;
+        } else if (x >= 120 && x <= 420) {
+            if (!lyrics_.empty()) show_lyrics_ = !show_lyrics_;
+        }
+        return;
+    }
+
+    if (screen_ == Screen::Login) {
+        if (x >= 520 && x <= 760 && y >= 600 && y <= 648 &&
+            clockSeconds() >= refresh_allowed_at_) {
+            startLogin();
+        }
+        return;
+    }
+
+    if (x < kSidebarWidth) {
+        for (int i = 0; i < 3; ++i) {
+            int top = 118 + i * 58;
+            if (y >= top - 10 && y <= top + 48) {
+                tab_ = i;
+                if (i == 2) startSearch();
+                return;
+            }
+        }
+        return;
+    }
+
+    if (x < 320 || y < kListTop) return;
+
+    int row = (int)((y - kListTop) / kRowHeight);
+
+    if (screen_ == Screen::Home) {
+        if (tab_ == 0 && !daily_.empty()) {
+            int index = daily_scroll_ + row;
+            if (index >= 0 && index < (int)daily_.size()) {
+                daily_sel_ = index;
+                playing_playlist_ = false;
+                playing_index_ = index;
+                playSong(daily_[index]);
+            }
+        } else if (tab_ == 1 && !playlists_.empty()) {
+            int index = playlist_scroll_ + row;
+            if (index >= 0 && index < (int)playlists_.size()) {
+                playlist_sel_ = index;
+                openPlaylist(playlists_[index].id, playlists_[index].name);
+            }
+        }
+    } else if (screen_ == Screen::Playlist && !tracks_.empty()) {
+        int index = track_scroll_ + row;
+        if (index >= 0 && index < (int)tracks_.size()) {
+            track_sel_ = index;
+            playing_playlist_ = true;
+            playing_index_ = index;
+            playSong(tracks_[index]);
+        }
+    }
+}
+
+void App::handleDrag(float, float dy) {
+    if (screen_ == Screen::Login || show_lyrics_) return;
+    if (touch_start_y_ < kListTop || touch_start_y_ > kNowBarY) return;
+
+    drag_accum_ += dy;
+    int step = 0;
+    while (drag_accum_ >= 30.0f) { ++step; drag_accum_ -= 30.0f; }
+    while (drag_accum_ <= -30.0f) { --step; drag_accum_ += 30.0f; }
+    if (step == 0) return;
+
+    // Finger moving down reveals earlier rows, so the scroll offset decreases.
+    int delta = -step;
+
+    if (screen_ == Screen::Home) {
+        if (tab_ == 0 && !daily_.empty()) {
+            int max_scroll = std::max(0, (int)daily_.size() - kVisibleRows);
+            daily_scroll_ = std::clamp(daily_scroll_ + delta, 0, max_scroll);
+        } else if (tab_ == 1 && !playlists_.empty()) {
+            int max_scroll = std::max(0, (int)playlists_.size() - kVisibleRows);
+            playlist_scroll_ = std::clamp(playlist_scroll_ + delta, 0, max_scroll);
+        }
+    } else if (screen_ == Screen::Playlist && !tracks_.empty()) {
+        int max_scroll = std::max(0, (int)tracks_.size() - kVisibleRows);
+        track_scroll_ = std::clamp(track_scroll_ + delta, 0, max_scroll);
+    }
+}
+
 void App::pollInput() {
+    pollTouch();
     padUpdate(&pad_);
     down_ = padGetButtonsDown(&pad_);
     held_ = padGetButtons(&pad_);
@@ -675,8 +811,13 @@ void App::drawNowBar() {
         return;
     }
 
-    ui_.text(32, kNowBarY + 12, utf8Truncate(player_.title(), 26), 20, kText);
-    ui_.text(32, kNowBarY + 42, utf8Truncate(player_.artist(), 30), 15, kSub);
+    bool paused = player_.state() == Player::State::Paused;
+    bool loading = player_.state() == Player::State::Loading;
+    ui_.rect(24, 644, 88, 52, paused || loading ? rgba(60, 60, 68) : kAccent);
+    ui_.textCentered(68, 658, paused ? "播放" : "暂停", 19, kText);
+
+    ui_.text(128, kNowBarY + 12, utf8Truncate(player_.title(), 24), 20, kText);
+    ui_.text(128, kNowBarY + 42, utf8Truncate(player_.artist(), 28), 15, kSub);
 
     const char *state_text = "";
     switch (player_.state()) {
@@ -687,7 +828,7 @@ void App::drawNowBar() {
     case Player::State::Finished: state_text = "播放结束"; break;
     default: break;
     }
-    ui_.text(32, kNowBarY + 62, state_text, 14, kSub);
+    ui_.text(128, kNowBarY + 62, state_text, 14, kSub);
 
     double position = player_.position();
     double duration = player_.duration();
@@ -695,17 +836,17 @@ void App::drawNowBar() {
     ratio = std::clamp(ratio, 0.0, 1.0);
 
     int bar_x = 420;
-    int bar_w = 780;
-    int bar_y = kNowBarY + 44;
+    int bar_w = 680;
+    int bar_y = kNowBarY + 40;
     ui_.rect(bar_x, bar_y, bar_w, 6, rgba(60, 60, 68));
     ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 6, kAccent);
 
     ui_.text(bar_x, bar_y + 12, formatTime(position), 14, kSub);
     ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 14, kSub);
 
-    char volume[32];
-    snprintf(volume, sizeof(volume), "音量 %d%%", (int)(player_.volume() * 100));
-    ui_.textRight(1240, kNowBarY + 12, volume, 15, kSub);
+    ui_.rect(1120, 644, 120, 52, rgba(52, 52, 62));
+    ui_.textCentered(1180, 658, "歌词", 19, kText);
+    ui_.textCentered(1180, 682, "Y", 12, kSub);
 }
 
 void App::drawLyrics() {
@@ -781,21 +922,17 @@ void App::drawLogin() {
     ui_.textCentered(640, 556, status, 20, kText);
 
     if (!net_error_.empty()) {
-        ui_.textCentered(640, 590, net_error_, 16, kAccent);
-    } else if (qr_key_.empty()) {
-        ui_.textCentered(640, 590, "按 A 重新获取二维码", 16, kAccent);
-    } else {
-        ui_.textCentered(640, 590, "二维码有效期约 5 分钟", 15, kSub);
+        ui_.textCentered(640, 574, net_error_, 15, kAccent);
+    } else if (!qr_key_.empty()) {
+        ui_.textCentered(640, 574, "二维码有效期约 5 分钟", 14, kSub);
     }
 
     double remain = refresh_allowed_at_ - clockSeconds();
-    if (remain > 0.0) {
-        char hint[64];
-        snprintf(hint, sizeof(hint), "A 刷新（%d 秒后可用）", (int)std::ceil(remain));
-        ui_.textCentered(640, 620, hint, 14, kSub);
-    } else {
-        ui_.textCentered(640, 620, "按 A 刷新二维码", 14, kSub);
-    }
+    bool ready = remain <= 0.0;
+    ui_.rect(520, 600, 240, 48, ready ? kAccent : rgba(60, 60, 68));
+    std::string label = ready ? "刷新二维码"
+                              : ("刷新（" + std::to_string((int)std::ceil(remain)) + " 秒）");
+    ui_.textCentered(640, 613, label, 18, kText);
 }
 
 void App::drawToast() {

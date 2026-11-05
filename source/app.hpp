@@ -31,6 +31,9 @@ private:
     void loopFrame();
 
     void pollInput();
+    void pollTouch();
+    void handleTap(float x, float y);
+    void handleDrag(float dx, float dy);
     bool held(uint64_t button) const { return (held_ & button) != 0; }
     bool pressed(uint64_t button) const { return (down_ & button) != 0; }
     bool pressedRepeat(uint64_t button, double &next_time);
@@ -73,6 +76,16 @@ private:
     SDL_Renderer *renderer_ = nullptr;
     PadState pad_{};
     bool running_ = true;
+
+    HidTouchScreenState touch_state_{};
+    bool touch_active_ = false;
+    bool touch_dragged_ = false;
+    float touch_last_x_ = 0;
+    float touch_last_y_ = 0;
+    float touch_start_y_ = 0;
+    float touch_move_ = 0;
+    float drag_accum_ = 0;
+    double touch_start_time_ = 0;
 
     uint64_t down_ = 0;
     uint64_t held_ = 0;
