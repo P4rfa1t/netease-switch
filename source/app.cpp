@@ -409,19 +409,19 @@ void App::toggleLikeCurrent() {
 }
 
 void App::toggleSidebar() {
-    sidebar_collapsed_ = !sidebar_collapsed_;
+    // Sidebar no longer exists in the TV layout; kept as a no-op for old hooks.
 }
 
 int App::sidebarWidth() const {
-    return sidebar_collapsed_ ? 88 : 300;
+    return 0;
 }
 
 int App::contentX() const {
-    return sidebarWidth() + 20;
+    return 56;
 }
 
 int App::contentWidth() const {
-    return 1280 - contentX() - 20;
+    return 1280 - 112;
 }
 
 void App::loadCover(const Song &song) {
@@ -792,30 +792,7 @@ void App::pollTouch() {
 }
 
 void App::handleTap(float x, float y) {
-    if (show_lyrics_) {
-        show_lyrics_ = false;
-        return;
-    }
-
-    if (y >= kNowBarY) {
-        if (x >= 24 && x <= 112 && y >= 640) {
-            player_.togglePause();
-        } else if (x >= 420 && x <= 940 && y >= 660 && y <= 700) {
-            double total = player_.duration();
-            if (total > 0) player_.seek(((x - 420.0) / 520.0) * total);
-        } else if (x >= 956 && x <= 1026 && y >= 640) {
-            toggleLikeCurrent();
-        } else if (x >= 1032 && x <= 1102 && y >= 640) {
-            cycleQuality();
-        } else if (x >= 1108 && y >= 640) {
-            if (lyrics_.empty()) toast("当前歌曲暂无歌词");
-            else show_lyrics_ = true;
-        } else if (x >= 120 && x <= 420) {
-            if (!lyrics_.empty()) show_lyrics_ = !show_lyrics_;
-        }
-        return;
-    }
-
+    // ---------- login ----------
     if (screen_ == Screen::Login) {
         if (x >= 520 && x <= 760 && y >= 600 && y <= 648 &&
             clockSeconds() >= refresh_allowed_at_) {
@@ -824,102 +801,140 @@ void App::handleTap(float x, float y) {
         return;
     }
 
-    int w = sidebarWidth();
-    if (x < w) {
-        int bx = sidebar_collapsed_ ? w - 40 : w - 44;
-        if (y >= 12 && y <= 46 && x >= bx - 10 && x <= bx + 34) {
-            toggleSidebar();
+    // ---------- player page ----------
+    if (screen_ == Screen::Player) {
+        // top bar: back to home
+        if (y < kTopBarHeight) {
+            if (x < 360) { screen_ = Screen::Home; return; }
+            // tab area
+            if (x >= 460 && x < 610) { switchPage(Page::Recommend); screen_ = Screen::Home; return; }
+            if (x >= 610 && x < 760) { switchPage(Page::Mine); screen_ = Screen::Home; return; }
             return;
         }
+        // progress bar seek
+        if (y >= 592 && y <= 620 && x >= 120 && x <= 1160) {
+            double total = player_.duration();
+            if (total > 0) player_.seek(((x - 120.0) / 1040.0) * total);
+            return;
+        }
+        // controls
+        if (y >= 650) {
+            if (x >= 150 && x <= 220) { player_.togglePause(); return; }
+            if (x >= 520 && x <= 600) { playAdjacent(-1); return; }
+            if (x >= 680 && x <= 760) { playAdjacent(1); return; }
+            if (x >= 1000) { screen_ = Screen::Home; return; }
+            return;
+        }
+        return;
+    }
 
-        {
-            int by = sidebar_collapsed_ ? 552 : 452;
-            int bx = sidebar_collapsed_ ? 20 : 18;
-            int bw = sidebar_collapsed_ ? 48 : w - 36;
-            if (y >= by && y <= by + 40 && x >= bx && x <= bx + bw) {
-                requestLogout();
+    // ---------- top bar on home/playlist ----------
+    if (y < kTopBarHeight) {
+        // now-playing pill -> player page
+        if (x < 360) {
+            if (current_song_id_ != 0) screen_ = Screen::Player;
+            return;
+        }
+        if (x >= 460 && x < 610) { switchPage(Page::Recommend); return; }
+        if (x >= 610 && x < 760) { switchPage(Page::Mine); return; }
+        if (x >= 1100) { startSearch(); return; }
+        return;
+    }
+
+    // ---------- playlist detail ----------
+    if (screen_ == Screen::Playlist) {
+        // action pills
+        if (y >= 150 && y <= 196) {
+            if (x >= 640 && x < 640 + 140) {  // 播放全部
+                if (!tracks_.empty()) {
+                    play_queue_ = tracks_;
+                    playing_index_ = 0;
+                    playSong(tracks_[0]);
+                }
                 return;
             }
         }
+        // two-column list: 4 rows x 2 cols
+        if (y >= 316) {
+            const int rows_per_page = 4;
+            int total_pages = ((int)tracks_.size() + rows_per_page * 2 - 1) / (rows_per_page * 2);
+            int page = total_pages > 0 ? track_sel_ / (rows_per_page * 2) : 0;
+            int page_start = page * rows_per_page * 2;
 
-        for (int i = 0; i < 7; ++i) {
-            int top = 112 + i * 54;
-            if (y >= top && y <= top + 44) {
-                tab_ = i;
-                sidebar_focus_ = true;
-                ensureTabLoaded();
-                if (i == 6) startSearch();
+            int col = (x >= 596) ? 1 : 0;
+            int row = (y - 316) / 84;
+            if (row >= 0 && row < rows_per_page) {
+                int index = page_start + col * rows_per_page + row;
+                if (index >= 0 && index < (int)tracks_.size()) {
+                    track_sel_ = index;
+                    play_queue_ = tracks_;
+                    playing_index_ = index;
+                    playSong(tracks_[index]);
+                    return;
+                }
+            }
+        }
+        // pagination
+        if (y >= 674 && y <= 700) {
+            int total_pages = ((int)tracks_.size() + 7) / 8;
+            int page = track_sel_ / 8;
+            if (x >= 580 && x <= 610 && page > 0) {
+                track_sel_ = std::max(0, (page - 1) * 8);
+            } else if (x >= 670 && x <= 700 && page + 1 < total_pages) {
+                track_sel_ = std::min((int)tracks_.size() - 1, (page + 1) * 8);
+            }
+            track_scroll_ = track_sel_ / 8;
+            return;
+        }
+        return;
+    }
+
+    // ---------- home ----------
+    if (page_ == Page::Recommend) {
+        // four feature cards
+        if (y >= 186 && y <= 486) {
+            int idx = (int)((x - 56) / 308);
+            if (idx >= 0 && idx < 4) {
+                card_index_ = idx;
+                nav_focused_ = false;
+                activateCard();
+                return;
+            }
+        }
+        // recommended playlist row
+        if (y >= 606 && y <= 700) {
+            int idx = (int)((x - 56) / 238);
+            if (idx >= 0 && idx < (int)discover_playlists_.size()) {
+                const Playlist &p = discover_playlists_[idx];
+                openPlaylist(p.id, p.name);
                 return;
             }
         }
         return;
     }
 
-    if (x >= 1280 - 140 && y >= 20 && y <= 62) {
-        refreshHomePage();
+    if (page_ == Page::Mine) {
+        // logout button
+        if (y >= 250 && y <= 296 && x >= 240 && x <= 390) {
+            requestLogout();
+            return;
+        }
+        // four entry tiles
+        if (y >= 366 && y <= 646) {
+            int idx = (int)((x - 56) / 300);
+            if (idx >= 0 && idx < 4) {
+                card_index_ = idx;
+                nav_focused_ = false;
+                activateCard();
+            }
+        }
         return;
-    }
-
-    if (x < contentX() || y < kListTop) return;
-
-    sidebar_focus_ = false;
-    int row = (int)((y - kListTop) / kRowHeight);
-
-    if (screen_ == Screen::Home) {
-        if (tab_ == 0 && !daily_.empty()) {
-            int index = daily_scroll_ + row;
-            if (index >= 0 && index < (int)daily_.size()) {
-                daily_sel_ = index;
-                play_queue_ = daily_;
-                playing_index_ = index;
-                playSong(daily_[index]);
-            }
-        } else if (tab_ == 1 && !playlists_.empty()) {
-            int index = playlist_scroll_ + row;
-            if (index >= 0 && index < (int)playlists_.size()) {
-                playlist_sel_ = index;
-                openPlaylist(playlists_[index].id, playlists_[index].name);
-            }
-        } else if (tab_ == 2) {
-            if (row == 0 && liked_playlist_id_ != 0) {
-                openPlaylist(liked_playlist_id_, "我喜欢的音乐");
-            }
-        } else if (tab_ == 3 && !recent_.empty()) {
-            int index = recent_scroll_ + row;
-            if (index >= 0 && index < (int)recent_.size()) {
-                recent_sel_ = index;
-                play_queue_ = recent_;
-                playing_index_ = index;
-                playSong(recent_[index]);
-            }
-        } else if (tab_ == 4 && !toplists_.empty()) {
-            int index = top_scroll_ + row;
-            if (index >= 0 && index < (int)toplists_.size()) {
-                top_sel_ = index;
-                openPlaylist(toplists_[index].id, toplists_[index].name);
-            }
-        } else if (tab_ == 5 && !recommend_.empty()) {
-            int index = rec_scroll_ + row;
-            if (index >= 0 && index < (int)recommend_.size()) {
-                rec_sel_ = index;
-                openPlaylist(recommend_[index].id, recommend_[index].name);
-            }
-        }
-    } else if (screen_ == Screen::Playlist && !tracks_.empty()) {
-        int index = track_scroll_ + row;
-        if (index >= 0 && index < (int)tracks_.size()) {
-            track_sel_ = index;
-            play_queue_ = tracks_;
-            playing_index_ = index;
-            playSong(tracks_[index]);
-        }
     }
 }
 
 void App::handleDrag(float, float dy) {
     if (screen_ == Screen::Login || show_lyrics_) return;
-    if (touch_start_x_ < sidebarWidth()) return;
-    if (touch_start_y_ < kListTop || touch_start_y_ > kNowBarY) return;
+    if (touch_start_y_ < kTopBarHeight) return;
 
     drag_accum_ += dy;
     int step = 0;
@@ -1567,12 +1582,13 @@ void App::drawNowBar() {
 }
 
 void App::drawLyrics() {
-    int left = sidebarWidth();
-    ui_.rect(left, 0, 1280 - left, kNowBarY, rgba(12, 12, 16, 242));
-    ui_.text(left + 24, 22, "歌词", 24, kText);
+    int left = 0;
+    ui_.rect(left, 0, 1280 - left, 720, rgba(12, 12, 16, 242));
+    ui_.text(left + 40, 92, "歌词", 26, kText);
+    ui_.textRight(1240, 96, "Y / 点击返回", 16, kHint);
 
     if (lyrics_.empty()) {
-        ui_.textCentered(left + (1280 - left) / 2, 300, "暂无歌词", 22, kSub);
+        ui_.textCentered(640, 340, "暂无歌词", 22, kSub);
         return;
     }
 
