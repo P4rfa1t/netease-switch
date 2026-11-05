@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -40,7 +41,7 @@ private:
     void handleDrag(float dx, float dy);
     bool held(uint64_t button) const { return (held_ & button) != 0; }
     bool pressed(uint64_t button) const { return (down_ & button) != 0; }
-    bool pressedRepeat(uint64_t button, double &next_time);
+    bool pressedRepeat(uint64_t button);
 
     void update();
     void draw();
@@ -92,6 +93,8 @@ private:
                           int top, const char *empty_hint);
     void drawPlayerPage();
     void drawCover(const std::string &url, int x, int y, int w, int h);
+    SDL_Texture *iconTexture(const char *name);
+    void drawIcon(const char *name, int x, int y, int w, int h);
     void requestCover(const std::string &url);
     void pollCovers();
     void switchPage(Page page);
@@ -125,10 +128,19 @@ private:
 
     uint64_t down_ = 0;
     uint64_t held_ = 0;
-    double repeat_up_next_ = 0;
-    double repeat_down_next_ = 0;
-    double repeat_vol_up_next_ = 0;
-    double repeat_vol_down_next_ = 0;
+    // One timer per button: sharing a timer between Up/Left makes a single press
+    // advance several steps because both branches see the same "fire" moment.
+    double repeat_next_[64] = {};
+    double repeat_next(HidNpadButton button) const {
+        int i = 0;
+        for (uint64_t b = button; b > 1; b >>= 1) ++i;
+        return (i >= 0 && i < 64) ? repeat_next_[i] : 0.0;
+    }
+    void setRepeatNext(HidNpadButton button, double value) {
+        int i = 0;
+        for (uint64_t b = button; b > 1; b >>= 1) ++i;
+        if (i >= 0 && i < 64) repeat_next_[i] = value;
+    }
 
     Screen screen_ = Screen::Login;
 
@@ -181,6 +193,7 @@ private:
     int card_scroll_ = 0;
     bool nav_focused_ = true;
     std::set<std::string> pending_covers_;
+    std::map<std::string, SDL_Texture *> icons_;
     std::vector<Playlist> discover_playlists_;
     int discover_sel_ = 0;
     int discover_scroll_ = 0;

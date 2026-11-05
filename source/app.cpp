@@ -734,18 +734,18 @@ void App::toast(const std::string &message) {
     logf("[toast] %s", message.c_str());
 }
 
-bool App::pressedRepeat(uint64_t button, double &next_time) {
+bool App::pressedRepeat(uint64_t button) {
     if (!(held_ & button)) {
-        next_time = 0;
+        setRepeatNext((HidNpadButton)button, 0.0);
         return false;
     }
     double now = clockSeconds();
     if (down_ & button) {
-        next_time = now + 0.35;
+        setRepeatNext((HidNpadButton)button, now + 0.45);
         return true;
     }
-    if (now >= next_time) {
-        next_time = now + 0.08;
+    if (now >= repeat_next((HidNpadButton)button)) {
+        setRepeatNext((HidNpadButton)button, now + 0.10);
         return true;
     }
     return false;
@@ -1005,8 +1005,8 @@ void App::pollInput() {
     if (pressed(HidNpadButton_X)) player_.togglePause();
     if (pressed(HidNpadButton_L)) playAdjacent(-1);
     if (pressed(HidNpadButton_R)) playAdjacent(1);
-    if (pressedRepeat(HidNpadButton_ZL, repeat_vol_down_next_)) player_.adjustVolume(-0.05f);
-    if (pressedRepeat(HidNpadButton_ZR, repeat_vol_up_next_)) player_.adjustVolume(0.05f);
+    if (pressedRepeat(HidNpadButton_ZL)) player_.adjustVolume(-0.05f);
+    if (pressedRepeat(HidNpadButton_ZR)) player_.adjustVolume(0.05f);
     if (pressed(HidNpadButton_StickR)) toggleLikeCurrent();
     if (pressed(HidNpadButton_StickL)) cycleQuality();
     if (pressed(HidNpadButton_Minus)) {
@@ -1059,17 +1059,17 @@ void App::pollInput() {
             track_scroll_ = track_sel_ / per_page;
         };
 
-        if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
+        if (pressedRepeat(HidNpadButton_Up)) {
             if (row > 0) go(row - 1, col, page);
         }
-        if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
+        if (pressedRepeat(HidNpadButton_Down)) {
             if (row < rows - 1) go(row + 1, col, page);
         }
-        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_)) {
+        if (pressedRepeat(HidNpadButton_Left)) {
             if (col == 1) go(row, 0, page);
             else go(row, 1, page - 1);
         }
-        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_)) {
+        if (pressedRepeat(HidNpadButton_Right)) {
             if (col == 0) go(row, 1, page);
             else go(row, 0, page + 1);
         }
@@ -1094,11 +1094,11 @@ void App::pollInput() {
             if (mine_sel_ < cols) mine_focus_ = 0;
             else mine_sel_ -= cols;
         }
-        if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
+        if (pressedRepeat(HidNpadButton_Down)) {
             if (mine_sel_ + cols < total) mine_sel_ += cols;
         }
-        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && mine_sel_ > 0) --mine_sel_;
-        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && mine_sel_ < total - 1) ++mine_sel_;
+        if (pressedRepeat(HidNpadButton_Left) && mine_sel_ > 0) --mine_sel_;
+        if (pressedRepeat(HidNpadButton_Right) && mine_sel_ < total - 1) ++mine_sel_;
 
         int rows_visible = 2;
         int row = mine_sel_ / cols;
@@ -1137,8 +1137,8 @@ void App::pollInput() {
     }
 
     int cols = (page_ == Page::Mine) ? 4 : 4;
-    if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && card_index_ > 0) --card_index_;
-    if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && card_index_ < cols - 1) ++card_index_;
+    if (pressedRepeat(HidNpadButton_Left) && card_index_ > 0) --card_index_;
+    if (pressedRepeat(HidNpadButton_Right) && card_index_ < cols - 1) ++card_index_;
     if (pressed(HidNpadButton_A)) activateCard();
 }
 
@@ -1331,6 +1331,37 @@ void App::pollCovers() {
     pending_covers_.clear();
 }
 
+SDL_Texture *App::iconTexture(const char *name) {
+    auto it = icons_.find(name);
+    if (it != icons_.end()) return it->second;
+
+    std::string path = std::string("romfs:/icons/") + name + ".png";
+    std::vector<unsigned char> bytes;
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) {
+        logf("[ui] icon missing: %s", path.c_str());
+        icons_[name] = nullptr;
+        return nullptr;
+    }
+    unsigned char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+    fclose(f);
+
+    SDL_Texture *tex = ui_.textureFromMemory(path, bytes);
+    icons_[name] = tex;
+    return tex;
+}
+
+void App::drawIcon(const char *name, int x, int y, int w, int h) {
+    SDL_Texture *tex = iconTexture(name);
+    if (tex) {
+        ui_.image(tex, x, y, w, h);
+    } else {
+        ui_.rect(x, y, w, h, rgba(255, 255, 255, 40));
+    }
+}
+
 void App::drawCover(const std::string &url, int x, int y, int w, int h) {
     SDL_Texture *tex = ui_.cachedImage(url);
     if (tex) {
@@ -1385,10 +1416,7 @@ void App::drawPlayerPage() {
 
     // --- vinyl disc, left half ---
     int cx = 340, cy = 400, r = 210;
-    ui_.circle(cx, cy, r + 16, rgba(20, 20, 22));
-    ui_.ring(cx, cy, r + 16, 2, rgba(255, 255, 255, 22));
-    ui_.circle(cx, cy, r, rgba(28, 28, 30));
-    ui_.ring(cx, cy, r, 1, rgba(255, 255, 255, 16));
+    drawIcon("disc", cx - r - 8, cy - r - 8, (r + 8) * 2, (r + 8) * 2);
     drawCover(cover_key_, cx - 118, cy - 118, 236, 236);
     ui_.circle(cx, cy, 10, rgba(16, 16, 18));
 
@@ -1415,23 +1443,26 @@ void App::drawPlayerPage() {
     ui_.text(bar_x, bar_y + 14, formatTime(pos), 15, kSub);
     ui_.textRight(bar_x + bar_w, bar_y + 14, formatTime(dur), 15, kSub);
 
-    // --- controls: straight centre row ---
+    // --- controls using the official TV client icons ---
     int cy2 = 660;
-    ui_.triangle(520, cy2 - 14, 18, 28, "left", kText);
-    ui_.triangle(536, cy2 - 14, 18, 28, "left", kText);
+    drawIcon("prev", 520, cy2 - 24, 48, 48);
 
-    if (player_.state() == Player::State::Paused || player_.state() == Player::State::Idle) {
-        ui_.triangle(626, cy2 - 20, 26, 40, "right", kText);
+    bool paused = player_.state() == Player::State::Paused ||
+                  player_.state() == Player::State::Idle;
+    if (paused) {
+        drawIcon("play", 616, cy2 - 28, 56, 56);
     } else {
-        ui_.pauseBars(626, cy2 - 20, 28, 40, kText);
+        ui_.pauseBars(620, cy2 - 22, 40, 44, kText);
     }
 
-    ui_.triangle(706, cy2 - 14, 18, 28, "right", kText);
-    ui_.triangle(722, cy2 - 14, 18, 28, "right", kText);
+    drawIcon("next", 704, cy2 - 24, 48, 48);
 
     // side actions
-    ui_.text(140, cy2 - 10, "喜欢", 17, kSub);
-    ui_.text(230, cy2 - 10, play_mode_ == PlayMode::Shuffle ? "随机"
+    bool liked = current_song_id_ != 0 && liked_ids_.count(current_song_id_) != 0;
+    drawIcon("like", 140, cy2 - 20, 40, 40);
+    if (liked) ui_.rectOutline(136, cy2 - 24, 48, 48, kAccent, 2);
+
+    ui_.text(200, cy2 - 8, play_mode_ == PlayMode::Shuffle ? "随机"
                               : play_mode_ == PlayMode::RepeatOne ? "单曲"
                                                                   : "顺序",
              17, kSub);
