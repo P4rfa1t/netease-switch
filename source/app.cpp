@@ -140,8 +140,16 @@ bool App::init() {
         }
         fclose(quality_file);
     }
-    if (api_.loggedIn() && loadAccount()) {
-        loadHome();
+    logf("[app] loggedIn=%d", (int)api_.loggedIn());
+    if (api_.loggedIn()) {
+        bool ok = loadAccount();
+        logf("[app] loadAccount=%d", (int)ok);
+        if (ok) {
+            loadHome();
+            logf("[app] loadHome done");
+        } else {
+            startLogin();
+        }
     } else {
         startLogin();
     }
@@ -149,6 +157,12 @@ bool App::init() {
 }
 
 void App::shutdown() {
+    cover_stop_ = true;
+    if (cover_thread_running_) {
+        threadWaitForExit(&cover_thread_);
+        threadClose(&cover_thread_);
+        cover_thread_running_ = false;
+    }
     player_.shutdown();
     ui_.shutdown();
     if (renderer_) SDL_DestroyRenderer(renderer_);
@@ -283,8 +297,11 @@ void App::loadHome() {
     daily_sel_ = daily_scroll_ = 0;
     playlist_sel_ = playlist_scroll_ = 0;
 
+    logf("[home] loading daily");
     bool ok = api_.dailySongs(daily_);
+    logf("[home] daily=%d", (int)ok);
     ok = api_.userPlaylists(playlists_) || ok;
+    logf("[home] playlists=%d", (int)playlists_.size());
     liked_playlist_id_ = 0;
     liked_track_count_ = 0;
     for (const auto &p : playlists_) {
@@ -297,12 +314,16 @@ void App::loadHome() {
     if (!ok) toast("加载失败，按 + 重试");
 
     loadDiscover();
+    logf("[home] discover=%d", (int)discover_playlists_.size());
     api_.homeBlocks(home_blocks_);
+    logf("[home] blocks=%d", (int)home_blocks_.size());
     for (const auto &b : home_blocks_) requestCover(b.cover);
 
     // Prefetch so the "我的" tiles and the player pill already have artwork.
+    logf("[home] prefetch recent/toplists");
     if (recent_.empty()) api_.recentSongs(recent_);
     if (toplists_.empty()) api_.toplists(toplists_);
+    logf("[home] recent=%d toplists=%d", (int)recent_.size(), (int)toplists_.size());
     for (const auto &song : recent_) requestCover(song.cover_url);
     for (const auto &pl : toplists_) requestCover(pl.cover_url);
     for (const auto &pl : playlists_) requestCover(pl.cover_url);
@@ -1177,7 +1198,7 @@ void App::pollInput() {
 
 void App::update() {
     pollLogin();
-    if (!pending_covers_.empty()) pollCovers();
+    pollCovers();
     if (!avatar_url_.empty() && !avatar_) avatar_ = ui_.cachedImage(avatar_url_);
 
     if (confirm_logout_ && clockSeconds() > logout_confirm_until_) {
@@ -1364,22 +1385,67 @@ void App::loadDiscover() {
 void App::requestCover(const std::string &url) {
     if (url.empty()) return;
     if (ui_.cachedImage(url)) return;
-    if (pending_covers_.count(url)) return;
-    pending_covers_.insert(url);
+    std::lock_guard<std::mutex> lock(cover_mutex_);
+    if (cover_queued_.count(url)) return;
+    cover_queued_.insert(url);
+    cover_queue_.push_back(url);
+}
+
+void App::coverWorkerMain() {
+    // Runs off the render thread: downloads never stall a frame.
+    while (!cover_stop_) {
+        std::string url;
+        {
+            std::lock_guard<std::mutex> lock(cover_mutex_);
+            if (cover_queue_.empty()) {
+                cover_busy_ = false;
+                break;
+            }
+            url = cover_queue_.front();
+            cover_queue_.erase(cover_queue_.begin());
+        }
+
+        HttpClient http;
+        std::vector<unsigned char> bytes;
+        if (http.download(url, bytes)) {
+            std::lock_guard<std::mutex> lock(cover_mutex_);
+            cover_ready_.push_back({url, std::move(bytes)});
+        }
+    }
 }
 
 void App::pollCovers() {
-    // Cap per frame: covers are 100-200 KB each and the UI thread must stay responsive.
-    int budget = 4;
-    auto it = pending_covers_.begin();
-    while (it != pending_covers_.end() && budget-- > 0) {
-        const std::string url = *it;
-        it = pending_covers_.erase(it);
-        std::vector<unsigned char> bytes;
-        if (http_.download(url, bytes)) {
-            ui_.textureFromMemory(url, bytes);
+    // Upload any finished downloads to textures on the render thread.
+    std::vector<std::pair<std::string, std::vector<unsigned char>>> done;
+    bool should_start = false;
+    {
+        std::lock_guard<std::mutex> lock(cover_mutex_);
+        done.swap(cover_ready_);
+        if (!cover_busy_ && !cover_queue_.empty()) {
+            cover_busy_ = true;
+            should_start = true;
         }
     }
+
+    for (auto &item : done) {
+        ui_.textureFromMemory(item.first, item.second);
+    }
+
+    if (should_start) {
+        if (cover_thread_running_) {
+            threadWaitForExit(&cover_thread_);
+            threadClose(&cover_thread_);
+            cover_thread_running_ = false;
+        }
+        if (R_SUCCEEDED(threadCreate(&cover_thread_, &App::coverThreadEntry, this, nullptr,
+                                     256 * 1024, 0x3B, -2))) {
+            if (R_SUCCEEDED(threadStart(&cover_thread_))) cover_thread_running_ = true;
+        }
+    }
+}
+
+void App::coverThreadEntry(void *arg) {
+    static_cast<App *>(arg)->coverWorkerMain();
 }
 
 SDL_Texture *App::iconTexture(const char *name) {

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -97,6 +99,8 @@ private:
     void drawIcon(const char *name, int x, int y, int w, int h);
     void requestCover(const std::string &url);
     void pollCovers();
+    void coverWorkerMain();
+    static void coverThreadEntry(void *arg);
     void switchPage(Page page);
     void activateCard();
     void loadDiscover();
@@ -196,7 +200,14 @@ private:
     int card_index_ = 0;             // focused card in the grid
     int card_scroll_ = 0;
     bool nav_focused_ = true;
-    std::set<std::string> pending_covers_;
+    std::set<std::string> cover_queued_;
+    std::vector<std::string> cover_queue_;
+    std::vector<std::pair<std::string, std::vector<unsigned char>>> cover_ready_;
+    std::mutex cover_mutex_;
+    bool cover_busy_ = false;
+    std::atomic<bool> cover_stop_{false};
+    Thread cover_thread_{};
+    bool cover_thread_running_ = false;
     std::map<std::string, SDL_Texture *> icons_;
     std::vector<Playlist> discover_playlists_;
     std::vector<HomeBlock> home_blocks_;
