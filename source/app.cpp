@@ -6,7 +6,12 @@
 #include <cstring>
 #include <string>
 
+#include <netdb.h>
+#include <sys/socket.h>
+
 #include <SDL2/SDL.h>
+
+#include <switch/runtime/resolver.h>
 
 #include "qrcodegen.hpp"
 #include "util.hpp"
@@ -38,6 +43,26 @@ void keepVisible(int &scroll, int selected, int visible) {
     if (selected < scroll) scroll = selected;
     if (visible > 0 && selected >= scroll + visible) scroll = selected - visible + 1;
     if (scroll < 0) scroll = 0;
+}
+
+int dnsProbe(const char *host) {
+    struct addrinfo hints {};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *result = nullptr;
+    int rc = getaddrinfo(host, "443", &hints, &result);
+    logf("[net] getaddrinfo(%s)=%d resolver=0x%x", host, rc, resolverGetLastResult());
+    if (result) freeaddrinfo(result);
+    return rc;
+}
+
+std::string dnsErrorMessage(int rc) {
+    switch (rc) {
+    case EAI_AGAIN: return "DNS 查询超时";
+    case EAI_NONAME: return "域名解析失败";
+    case EAI_SYSTEM: return "网络未连接";
+    default: return "网络请求失败";
+    }
 }
 
 } // namespace
@@ -73,7 +98,8 @@ bool App::init() {
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
     logInit();
-    socketInitializeDefault();
+    Result socket_rc = socketInitializeDefault();
+    logf("[net] socketInitializeDefault=0x%x", socket_rc);
     logf("[app] starting netease-switch");
 
     player_.init();
@@ -89,6 +115,8 @@ bool App::init() {
     logf("[app] controller: %s", controller_ ? SDL_GameControllerName(controller_) : "none");
 
     if (!ui_.init(renderer_)) return false;
+
+    waitForNetwork();
 
     http_.loadCookies("sdmc:/switch/netease-switch/cookies.json");
     if (api_.loggedIn() && loadAccount()) {
@@ -111,6 +139,35 @@ void App::shutdown() {
     romfsExit();
 }
 
+void App::waitForNetwork() {
+    Result rc = nifmInitialize(NifmServiceType_User);
+    if (R_FAILED(rc)) {
+        logf("[net] nifmInitialize failed 0x%x", rc);
+        return;
+    }
+
+    ui_.clear(kBg);
+    ui_.textCentered(640, 320, "正在检查网络…", 24, kText);
+    ui_.textCentered(640, 362, "请确认 Switch 已连接 Wi-Fi", 16, kSub);
+    SDL_RenderPresent(renderer_);
+
+    for (int i = 0; i < 12; ++i) {
+        NifmInternetConnectionType type{};
+        u32 strength = 0;
+        NifmInternetConnectionStatus status{};
+        Result st = nifmGetInternetConnectionStatus(&type, &strength, &status);
+        if (R_SUCCEEDED(st)) {
+            logf("[net] connection type=%d strength=%u status=%d", (int)type, strength, (int)status);
+            if (status == NifmInternetConnectionStatus_Connected) break;
+        } else {
+            logf("[net] nifmGetInternetConnectionStatus failed 0x%x", st);
+        }
+        svcSleepThread(500000000ULL);
+    }
+
+    nifmExit();
+}
+
 void App::startLogin() {
     screen_ = Screen::Login;
     show_lyrics_ = false;
@@ -120,9 +177,12 @@ void App::startLogin() {
     qr_code_ = 0;
 
     if (!api_.qrCreate(qr_key_)) {
-        toast("获取二维码失败，按 A 重试");
+        int rc = dnsProbe("music.163.com");
+        net_error_ = dnsErrorMessage(rc) + " (" + std::to_string(rc) + ")";
+        toast(net_error_);
         return;
     }
+    net_error_.clear();
     qr_url_ = "https://music.163.com/login?codekey=" + qr_key_;
     qr_code_ = 800;
     next_qr_poll_ = clockSeconds() + 2.0;
@@ -138,6 +198,12 @@ void App::pollLogin() {
     int code = api_.qrCheck(qr_key_);
     qr_code_ = code;
     logf("[login] poll code=%d", code);
+
+    if (code == 0) {
+        net_error_ = "网络异常，稍后自动重试";
+    } else {
+        net_error_.clear();
+    }
 
     if (code == 803) {
         http_.saveCookies("sdmc:/switch/netease-switch/cookies.json");
@@ -722,11 +788,15 @@ void App::drawLogin() {
     case 801: status = "已扫描，请在手机上确认登录"; break;
     case 802: status = "二维码已过期，按 A 刷新"; break;
     case 803: status = "登录成功"; break;
+    case -1: status = "网络异常，2 秒后重试"; break;
     default: status = "正在获取二维码…"; break;
     }
     ui_.textCentered(640, 556, status, 20, kText);
 
-    if (qr_key_.empty()) {
+    if (!net_error_.empty()) {
+        ui_.textCentered(640, 590, net_error_, 16, kAccent);
+        ui_.textCentered(640, 614, "按 A 重新获取二维码", 15, kSub);
+    } else if (qr_key_.empty()) {
         ui_.textCentered(640, 590, "网络连接失败，按 A 重试", 16, kAccent);
     } else {
         ui_.textCentered(640, 590, "二维码有效期约 5 分钟", 15, kSub);

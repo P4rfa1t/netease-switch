@@ -43,6 +43,7 @@ private:
 
     void startLogin();
     void pollLogin();
+    void waitForNetwork();
     bool loadAccount();
     void loadHome();
     void refreshHomePage();
@@ -85,6 +86,7 @@ private:
     uint64_t uid_ = 0;
     std::string nickname_;
 
+    std::string net_error_;
     std::string qr_key_;
     std::string qr_url_;
     int qr_code_ = 0;
