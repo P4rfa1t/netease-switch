@@ -216,12 +216,35 @@ void Player::threadMain() {
     }
     if (stop_) return;
 
+    // Sniff the container instead of trusting the requested format: cloud-disk
+    // uploads are often AAC/M4A or FLAC even when we asked for an mp3 stream.
+    char magic[16] = {};
+    memcpy(magic, file.data(), file.size() < sizeof(magic) ? file.size() : sizeof(magic));
+    logf("[audio] %zu bytes, magic=%02X%02X%02X%02X (%c%c%c%c)", file.size(),
+         (unsigned char)magic[0], (unsigned char)magic[1], (unsigned char)magic[2],
+         (unsigned char)magic[3],
+         (magic[0] >= 32 && magic[0] < 127) ? magic[0] : '.',
+         (magic[1] >= 32 && magic[1] < 127) ? magic[1] : '.',
+         (magic[2] >= 32 && magic[2] < 127) ? magic[2] : '.',
+         (magic[3] >= 32 && magic[3] < 127) ? magic[3] : '.');
+
     bool is_flac = file.size() > 4 && memcmp(file.data(), "fLaC", 4) == 0;
+    bool is_m4a = file.size() > 12 && memcmp(file.data() + 4, "ftyp", 4) == 0;
+    bool looks_html = file.size() > 5 && memcmp(file.data(), "<!DOC", 5) == 0;
+    bool looks_json = !file.empty() && file[0] == '{';
+
     drmp3 mp3{};
     drflac *flac = nullptr;
     int channels = 2;
     uint32_t rate = 44100;
     uint64_t total = 0;
+
+    if (looks_html || looks_json) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "取到的不是音频（链接已失效或需要重新登录）";
+        state_ = State::Error;
+        return;
+    }
 
     if (is_flac) {
         flac = drflac_open_memory(file.data(), file.size(), nullptr);
@@ -234,10 +257,15 @@ void Player::threadMain() {
         channels = flac->channels;
         rate = flac->sampleRate;
         total = flac->totalPCMFrameCount;
+    } else if (is_m4a) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "该歌曲是 M4A/AAC 格式，当前解码器不支持";
+        state_ = State::Error;
+        return;
     } else {
         if (!drmp3_init_memory(&mp3, file.data(), file.size(), nullptr)) {
             std::lock_guard<std::mutex> lock(mutex_);
-            error_ = "MP3 解码失败";
+            error_ = "MP3 解码失败（格式可能不受支持）";
             state_ = State::Error;
             return;
         }

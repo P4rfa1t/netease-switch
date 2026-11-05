@@ -348,6 +348,13 @@ bool NetEaseApi::songUrl(uint64_t id, int br, std::string &url, std::string &err
     if (j.contains("data") && j["data"].is_array() && !j["data"].empty()) {
         const auto &first = j["data"][0];
         url = first.value("url", "");
+        // Log what the server actually handed back; cloud uploads often come
+        // back as a different container than the level we asked for.
+        logf("[api] url id=%llu code=%d fee=%d br=%d type=%s level=%s size=%lld url=%d",
+             (unsigned long long)id, first.value("code", 0), first.value("fee", 0),
+             first.value("br", 0), first.value("type", "").c_str(),
+             first.value("level", "").c_str(),
+             (long long)first.value("size", 0LL), (int)!url.empty());
         if (!url.empty()) return true;
         if (first.value("code", 0) == 404 || first.value("fee", 0) != 0) {
             error = "该歌曲暂无版权或需要 VIP";
