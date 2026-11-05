@@ -35,7 +35,7 @@ LDFLAGS	:=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $
 
 LIBS	:=	-lSDL2_ttf -lharfbuzz -lfreetype -lSDL2_image -lpng16 -ljpeg -lwebp \
 			-lz -lbz2 -lSDL2 -lEGL -lglapi -ldrm_nouveau \
-			-lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lnx -lm
+			-lavformat -lavcodec -lswresample -lavutil -ldav1d -lz -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lnx -lm
 
 #---------------------------------------------------------------------------------
 LIBDIRS	:=	$(PORTLIBS) $(LIBNX)

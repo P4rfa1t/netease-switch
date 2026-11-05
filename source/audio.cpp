@@ -7,6 +7,7 @@
 #include <SDL2/SDL.h>
 
 #include "dr_flac.h"
+#include "ffmpeg_decoder.hpp"
 #include "dr_mp3.h"
 #include "http.hpp"
 #include "util.hpp"
@@ -251,6 +252,8 @@ void Player::threadMain() {
 
     drmp3 mp3{};
     drflac *flac = nullptr;
+    FfmpegDecoder *ffd = nullptr;
+    bool using_ffmpeg = false;
     int channels = 2;
     uint32_t rate = 44100;
     uint64_t total = 0;
@@ -274,10 +277,20 @@ void Player::threadMain() {
         rate = flac->sampleRate;
         total = flac->totalPCMFrameCount;
     } else if (is_m4a || (is_aac && !is_mp3)) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        error_ = "该歌曲是 M4A/AAC 格式，当前解码器不支持";
-        state_ = State::Error;
-        return;
+        // Cloud uploads arrive as M4A/AAC; hand those to libavformat.
+        using_ffmpeg = true;
+        ffd = new FfmpegDecoder();
+        if (!ffd->open(file, "m4a")) {
+            delete ffd;
+            ffd = nullptr;
+            std::lock_guard<std::mutex> lock(mutex_);
+            error_ = "M4A/AAC 解码失败";
+            state_ = State::Error;
+            return;
+        }
+        channels = ffd->channels();
+        rate = (uint32_t)ffd->sampleRate();
+        total = ffd->totalFrames();
     } else {
         // ID3-tagged streams are still plain MP3 frames inside.
         if (!drmp3_init_memory(&mp3, file.data(), file.size(), nullptr)) {
@@ -306,6 +319,7 @@ void Player::threadMain() {
         error_ = std::string("音频设备打开失败: ") + SDL_GetError();
         state_ = State::Error;
         if (flac) drflac_close(flac);
+        if (ffd) delete ffd;
         drmp3_uninit(&mp3);
         return;
     }
@@ -330,7 +344,8 @@ void Player::threadMain() {
         if (request >= 0) {
             uint64_t target = (uint64_t)request;
             if (total > 0 && target > total) target = total;
-            if (is_flac) drflac_seek_to_pcm_frame(flac, target);
+            if (using_ffmpeg) ffd->seek((double)target / (double)rate);
+            else if (is_flac) drflac_seek_to_pcm_frame(flac, target);
             else drmp3_seek_to_pcm_frame(&mp3, target);
             std::lock_guard<std::mutex> lock(mutex_);
             read_pos_ = write_pos_ = count_ = 0;
@@ -343,7 +358,9 @@ void Player::threadMain() {
             continue;
         }
 
-        uint64_t got = is_flac ? drflac_read_pcm_frames_s16(flac, kChunkFrames, chunk.data())
+        uint64_t got = using_ffmpeg
+                           ? (uint64_t)ffd->read(chunk.data(), (int)kChunkFrames)
+                       : is_flac ? drflac_read_pcm_frames_s16(flac, kChunkFrames, chunk.data())
                                : drmp3_read_pcm_frames_s16(&mp3, kChunkFrames, chunk.data());
         if (got == 0) break;
         appendStereo(chunk.data(), (size_t)got, channels);
@@ -366,6 +383,7 @@ void Player::threadMain() {
     }
 
     if (flac) drflac_close(flac);
+    if (ffd) delete ffd;
     drmp3_uninit(&mp3);
 }
 
