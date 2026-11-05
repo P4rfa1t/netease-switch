@@ -38,10 +38,6 @@ constexpr int kRowHeight = 56;
 constexpr int kVisibleRows = 9;
 constexpr int kListTop = 88;
 
-double clockSeconds() {
-    return (double)SDL_GetTicks64() / 1000.0;
-}
-
 void keepVisible(int &scroll, int selected, int visible) {
     if (selected < scroll) scroll = selected;
     if (visible > 0 && selected >= scroll + visible) scroll = selected - visible + 1;
@@ -116,8 +112,14 @@ bool App::init() {
 
     waitForNetwork();
 
-    http_.loadCookies("sdmc:/switch/netease-switch/cookies.json");
     http_.loadCookieText("sdmc:/switch/netease-switch/cookie.txt");
+    {
+        std::string manual = http_.cookie("MUSIC_U");
+        if (!manual.empty() && manual != api_.musicU()) {
+            logf("[login] using MUSIC_U from cookie.txt");
+            api_.setMusicU(manual);
+        }
+    }
 
     FILE *quality_file = fopen("sdmc:/switch/netease-switch/quality.txt", "r");
     if (quality_file) {
@@ -215,7 +217,9 @@ void App::pollLogin() {
     }
 
     if (code == 803) {
-        http_.saveCookies("sdmc:/switch/netease-switch/cookies.json");
+        std::string cookie = http_.cookie("MUSIC_U");
+        if (cookie.empty()) cookie = api_.musicU();
+        if (!cookie.empty()) api_.setMusicU(cookie);
         if (loadAccount()) {
             toast("登录成功");
             loadHome();
@@ -244,7 +248,7 @@ void App::loadHome() {
     playlist_sel_ = playlist_scroll_ = 0;
 
     bool ok = api_.dailySongs(daily_);
-    ok = api_.userPlaylists(uid_, playlists_) || ok;
+    ok = api_.userPlaylists(playlists_) || ok;
     liked_playlist_id_ = 0;
     liked_track_count_ = 0;
     for (const auto &p : playlists_) {
@@ -260,7 +264,7 @@ void App::loadHome() {
 void App::loadRecent() {
     redrawNow();
     std::vector<Song> songs;
-    if (!api_.recentSongs(uid_, songs)) {
+    if (!api_.recentSongs(songs)) {
         toast("最近播放加载失败");
         return;
     }
@@ -395,7 +399,7 @@ void App::refreshHomePage() {
         }
     } else if (tab_ == 1 || tab_ == 2) {
         std::vector<Playlist> lists;
-        if (api_.userPlaylists(uid_, lists)) {
+        if (api_.userPlaylists(lists)) {
             playlists_ = lists;
             playlist_sel_ = std::min(playlist_sel_, (int)playlists_.size() - 1);
             if (playlist_sel_ < 0) playlist_sel_ = 0;

@@ -16,8 +16,7 @@ namespace ntv {
 
 namespace {
 const char *kUserAgent =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36";
+    "NeteaseMusic/1.1.80.260122145233(1001080);Android 9;Switch";
 const char *kCaPath = "romfs:/cacert.pem";
 
 std::string lower(std::string s) {
@@ -47,7 +46,7 @@ void HttpClient::prepare(const std::string &url) {
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 30L);
     curl_easy_setopt(curl_, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl_, CURLOPT_ACCEPT_ENCODING, "identity");
+    curl_easy_setopt(curl_, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, nullptr);
 
     if (has_ca_) {
@@ -162,6 +161,34 @@ HttpResult HttpClient::postForm(const std::string &url, const std::string &body)
 int HttpClient::progressCallback(void *userdata, long long, long long, long long, long long) {
     auto *cancel = static_cast<const std::atomic<bool> *>(userdata);
     return (cancel && cancel->load()) ? 1 : 0;
+}
+
+HttpResult HttpClient::postFormWithCookie(const std::string &url, const std::string &body,
+                                          const std::string &cookie) {
+    HttpResult result;
+    prepare(url);
+    curl_easy_setopt(curl_, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl_, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl_, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, &HttpClient::writeToString);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &result.body);
+    curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, &HttpClient::headerCallback);
+    curl_easy_setopt(curl_, CURLOPT_HEADERDATA, this);
+
+    curl_slist *list = curl_slist_append(nullptr, "Content-Type: application/x-www-form-urlencoded");
+    if (!cookie.empty()) list = curl_slist_append(list, ("Cookie: " + cookie).c_str());
+    curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, list);
+
+    CURLcode code = curl_easy_perform(curl_);
+    curl_slist_free_all(list);
+
+    if (code != CURLE_OK) {
+        logf("[http] POST %s failed: %s", url.c_str(), curl_easy_strerror(code));
+        result.status = 0;
+    } else {
+        curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &result.status);
+    }
+    return result;
 }
 
 bool HttpClient::download(const std::string &url, std::vector<unsigned char> &out,

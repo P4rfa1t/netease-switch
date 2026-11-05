@@ -6,9 +6,15 @@
 #include <string>
 #include <sys/stat.h>
 
+#include <switch.h>
+
 namespace ntv {
 
 static FILE *g_log = nullptr;
+
+double clockSeconds() {
+    return (double)armGetSystemTick() / (double)armGetSystemTickFreq();
+}
 
 void logInit() {
     mkdir("sdmc:/switch", 0777);

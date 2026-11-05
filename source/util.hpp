@@ -5,6 +5,7 @@
 
 namespace ntv {
 
+double clockSeconds();
 void logInit();
 void logf(const char *fmt, ...);
 

@@ -25,6 +25,8 @@ public:
 
     HttpResult get(const std::string &url);
     HttpResult postForm(const std::string &url, const std::string &body);
+    HttpResult postFormWithCookie(const std::string &url, const std::string &body,
+                                  const std::string &cookie);
     bool download(const std::string &url, std::vector<unsigned char> &out,
                   const std::atomic<bool> *cancel = nullptr);
 

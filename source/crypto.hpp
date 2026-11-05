@@ -6,14 +6,13 @@
 
 namespace ntv::crypto {
 
-struct WeapiParams {
-    std::string params;
-    std::string enc_sec_key;
-};
+// eapi 请求加密：inner 必须是 "/api/..."，返回大写 hex
+std::string eapiEncrypt(const std::string &inner_path, const std::string &json);
 
-// Encrypts a JSON body the way music.163.com's web client does.
-WeapiParams weapiEncrypt(const nlohmann::json &body);
+// eapi 响应解密：服务端对部分接口返回 AES-128-ECB 密文
+bool eapiDecrypt(const std::string &raw, std::string &out);
 
-std::string randomBase62(size_t len);
+std::string md5Hex(const std::string &data);
+std::string randomHex(size_t len);
 
 } // namespace ntv::crypto
