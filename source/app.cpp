@@ -962,13 +962,17 @@ void App::handleTap(float x, float y) {
             requestLogout();
             return;
         }
-        // four entry tiles
-        if (y >= 366 && y <= 646) {
-            int idx = (int)((x - 56) / 300);
-            if (idx >= 0 && idx < 4) {
-                card_index_ = idx;
-                nav_focused_ = false;
-                activateCard();
+        // Six entry tiles: 3 columns x 2 rows, 280x156 each.
+        if (y >= 366 && y <= 700) {
+            int col = (int)((x - 56) / 300);
+            int row = (y >= 542) ? 1 : 0;
+            if (col >= 0 && col < 3) {
+                int idx = row * 3 + col;
+                if (idx >= 0 && idx < 6) {
+                    card_index_ = idx;
+                    nav_focused_ = false;
+                    activateCard();
+                }
             }
         }
         return;
@@ -1149,15 +1153,25 @@ void App::pollInput() {
         return;
     }
 
-    if (pressed(HidNpadButton_Up) &&
-        (page_ == Page::Recommend || page_ == Page::Mine) && card_index_ < 4) {
-        nav_focused_ = true;
+    const int cols = (page_ == Page::Mine) ? 3 : 4;
+    const int rows = (page_ == Page::Mine) ? 2 : 1;
+    const int total = cols * rows;
+
+    // Moving up from the first row returns to the tab bar.
+    if (pressed(HidNpadButton_Up)) {
+        if (card_index_ < cols) {
+            nav_focused_ = true;
+            return;
+        }
+        card_index_ -= cols;
         return;
     }
-
-    int cols = (page_ == Page::Mine) ? 4 : 4;
-    if (pressedRepeat(HidNpadButton_Left) && card_index_ > 0) --card_index_;
-    if (pressedRepeat(HidNpadButton_Right) && card_index_ < cols - 1) ++card_index_;
+    if (pressed(HidNpadButton_Down) && card_index_ + cols < total) {
+        card_index_ += cols;
+        return;
+    }
+    if (pressedRepeat(HidNpadButton_Left) && card_index_ % cols > 0) --card_index_;
+    if (pressedRepeat(HidNpadButton_Right) && card_index_ % cols < cols - 1) ++card_index_;
     if (pressed(HidNpadButton_A)) activateCard();
 }
 
@@ -1186,11 +1200,13 @@ void App::update() {
 }
 
 void App::redrawNow() {
+    if (drawing_) return;   // never re-enter through a draw-time callback
     draw();
     SDL_RenderPresent(renderer_);
 }
 
 void App::draw() {
+    drawing_ = true;
     ui_.clear(kBg);
 
     switch (screen_) {
@@ -1213,6 +1229,7 @@ void App::draw() {
     if (screen_ == Screen::Player) drawPlayerPage();
     if (show_lyrics_) drawLyrics();
     drawToast();
+    drawing_ = false;
 }
 
 void App::drawTopBar() {
@@ -1539,7 +1556,8 @@ std::vector<Playlist> App::mineSectionPlaylists() {
         // Collected playlists come from their own endpoint; the merged
         // user/playlist result does not reliably flag subscribed.
         if (collected_.empty() && !collected_loaded_) {
-            redrawNow();
+            // No redraw here: this runs inside drawMineGrid(), and redrawing
+            // would re-enter the same function.
             std::vector<Playlist> lists;
             if (api_.collectedPlaylists(lists)) collected_ = lists;
             collected_loaded_ = true;

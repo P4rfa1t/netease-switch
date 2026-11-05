@@ -113,6 +113,7 @@ private:
     SDL_Renderer *renderer_ = nullptr;
     PadState pad_{};
     bool running_ = true;
+    bool drawing_ = false;
 
     HidTouchScreenState touch_state_{};
     bool touch_logged_ = false;
