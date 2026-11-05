@@ -339,6 +339,7 @@ void Player::threadMain() {
     state_ = State::Playing;
 
     std::vector<int16_t> chunk(kChunkFrames * 8);
+    uint64_t frames_produced = 0;
     while (!stop_) {
         int64_t request = seek_request_.exchange(-1);
         if (request >= 0) {
@@ -363,7 +364,22 @@ void Player::threadMain() {
                        : is_flac ? drflac_read_pcm_frames_s16(flac, kChunkFrames, chunk.data())
                                : drmp3_read_pcm_frames_s16(&mp3, kChunkFrames, chunk.data());
         if (got == 0) break;
+        frames_produced += got;
         appendStereo(chunk.data(), (size_t)got, channels);
+    }
+
+    if (frames_produced == 0 && !stop_) {
+        // The decoder opened but never produced audio; treat it as an error so
+        // the UI reports the problem instead of auto-skipping the track.
+        std::lock_guard<std::mutex> lock(mutex_);
+        error_ = "解码后没有得到音频数据";
+        state_ = State::Error;
+        SDL_CloseAudioDevice(device);
+        device_id_ = 0;
+        if (flac) drflac_close(flac);
+        if (ffd) delete ffd;
+        drmp3_uninit(&mp3);
+        return;
     }
 
     while (!stop_) {

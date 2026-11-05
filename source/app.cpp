@@ -439,6 +439,19 @@ void App::cycleQuality() {
         fclose(f);
     }
     toast(std::string("音质：") + kBrNames[quality_index_]);
+
+    // Re-fetch the current track so the new level actually takes effect.
+    if (current_song_id_ != 0 && !play_queue_.empty() && playing_index_ >= 0 &&
+        playing_index_ < (int)play_queue_.size()) {
+        const Song &song = play_queue_[playing_index_];
+        std::string url;
+        std::string error;
+        if (api_.songUrl(song.id, kBrValues[quality_index_], url, error)) {
+            player_.play(url, song.name, song.artist);
+        } else {
+            toast(error);
+        }
+    }
 }
 
 void App::ensureTabLoaded() {
