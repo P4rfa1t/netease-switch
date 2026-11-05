@@ -13,6 +13,28 @@ namespace ntv {
 
 namespace {
 
+// nlohmann's value() throws on null; JSON from this API is full of nulls, and an
+// uncaught exception aborts the process on libnx.
+std::string jsonStr(const nlohmann::json &j, const char *key, const char *fallback = "") {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null() || !it->is_string()) return fallback;
+    return it->get<std::string>();
+}
+
+long long jsonInt(const nlohmann::json &j, const char *key, long long fallback = 0) {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null() || !it->is_number()) return fallback;
+    return it->get<long long>();
+}
+
+bool jsonBool(const nlohmann::json &j, const char *key, bool fallback = false) {
+    auto it = j.find(key);
+    if (it == j.end() || it->is_null() || !it->is_boolean()) return fallback;
+    return it->get<bool>();
+}
+
+
+
 const char *kHost = "https://interface3.music.163.com";
 const char *kAppVer = "1.1.80";
 const char *kVersionCode = "1001080";
@@ -26,7 +48,7 @@ std::string joinArtists(const nlohmann::json &song) {
         if (!song.contains(key) || !song[key].is_array()) continue;
         for (const auto &artist : song[key]) {
             if (!out.empty()) out += " / ";
-            out += artist.value("name", "");
+            out += jsonStr(artist, "name");
         }
         if (!out.empty()) return out;
     }
@@ -34,14 +56,14 @@ std::string joinArtists(const nlohmann::json &song) {
 }
 
 std::string albumName(const nlohmann::json &song) {
-    if (song.contains("al") && song["al"].is_object()) return song["al"].value("name", "");
-    if (song.contains("album") && song["album"].is_object()) return song["album"].value("name", "");
+    if (song.contains("al") && song["al"].is_object()) return jsonStr(song["al"], "name");
+    if (song.contains("album") && song["album"].is_object()) return jsonStr(song["album"], "name");
     return "";
 }
 
 std::string coverUrl(const nlohmann::json &song) {
-    if (song.contains("al") && song["al"].is_object()) return song["al"].value("picUrl", "");
-    if (song.contains("album") && song["album"].is_object()) return song["album"].value("picUrl", "");
+    if (song.contains("al") && song["al"].is_object()) return jsonStr(song["al"], "picUrl");
+    if (song.contains("album") && song["album"].is_object()) return jsonStr(song["album"], "picUrl");
     return "";
 }
 
@@ -172,13 +194,13 @@ nlohmann::json NetEaseApi::call(const std::string &path, const nlohmann::json &b
 
 Song NetEaseApi::parseSong(const nlohmann::json &j) {
     Song s;
-    s.id = j.value("id", (uint64_t)0);
-    s.name = j.value("name", "");
+    s.id = (uint64_t)jsonInt(j, "id");
+    s.name = jsonStr(j, "name");
     s.artist = joinArtists(j);
     s.album = albumName(j);
     s.cover_url = coverUrl(j);
-    s.duration_ms = j.value("dt", 0);
-    if (!s.duration_ms) s.duration_ms = j.value("duration", 0);
+    s.duration_ms = (int)jsonInt(j, "dt");
+    if (!s.duration_ms) s.duration_ms = (int)jsonInt(j, "duration");
     return s;
 }
 
@@ -190,14 +212,14 @@ bool NetEaseApi::account(uint64_t &uid, std::string &nickname, std::string *avat
                          std::string *vip) {
     auto j = call("nuser/account/get", nullptr);
     if (!j.contains("account") || j["account"].is_null()) return false;
-    uid = j["account"].value("id", (uint64_t)0);
+    uid = (uint64_t)jsonInt(j["account"], "id");
     uid_ = uid;
     if (j.contains("profile") && j["profile"].is_object()) {
         const auto &p = j["profile"];
-        nickname = p.value("nickname", "");
-        if (avatar) *avatar = p.value("avatarUrl", "");
+        nickname = jsonStr(p, "nickname");
+        if (avatar) *avatar = jsonStr(p, "avatarUrl");
         if (vip) {
-            int vip_type = p.value("vipType", 0);
+            int vip_type = (int)jsonInt(p, "vipType");
             if (vip_type > 0) *vip = "黑胶 VIP";
         }
     }
@@ -206,14 +228,14 @@ bool NetEaseApi::account(uint64_t &uid, std::string &nickname, std::string *avat
 
 bool NetEaseApi::qrCreate(std::string &unikey) {
     auto j = call("login/qrcode/unikey", {{"type", "2"}});
-    if (j.value("code", 0) != 200) return false;
-    unikey = j.value("unikey", "");
+    if ((int)jsonInt(j, "code") != 200) return false;
+    unikey = jsonStr(j, "unikey");
     return !unikey.empty();
 }
 
 int NetEaseApi::qrCheck(const std::string &unikey) {
     auto j = call("login/qrcode/client/login", {{"type", "2"}, {"key", unikey}});
-    int code = j.value("code", -1);
+    int code = (int)jsonInt(j, "code", -1);
     if (code == 803) {
         std::string cookie = http_.cookie("MUSIC_U");
         if (!cookie.empty() && cookie != music_u_) setMusicU(cookie);
@@ -255,14 +277,14 @@ bool NetEaseApi::userPlaylists(std::vector<Playlist> &out) {
     out.clear();
     for (const auto &item : j["playlist"]) {
         Playlist p;
-        p.id = item.value("id", (uint64_t)0);
-        p.name = item.value("name", "");
-        p.track_count = item.value("trackCount", 0);
-        p.special_type = item.value("specialType", 0);
-        p.subscribed = item.value("subscribed", false);
-        p.cover_url = item.value("coverImgUrl", "");
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.track_count = (int)jsonInt(item, "trackCount");
+        p.special_type = (int)jsonInt(item, "specialType");
+        p.subscribed = jsonBool(item, "subscribed");
+        p.cover_url = jsonStr(item, "coverImgUrl");
         if (item.contains("creator") && item["creator"].is_object()) {
-            p.creator = item["creator"].value("nickname", "");
+            p.creator = jsonStr(item["creator"], "nickname");
         }
         if (p.id != 0) out.push_back(p);
     }
@@ -282,14 +304,14 @@ bool NetEaseApi::collectedPlaylists(std::vector<Playlist> &out) {
     out.clear();
     for (const auto &item : *items) {
         Playlist p;
-        p.id = item.value("id", (uint64_t)0);
-        p.name = item.value("name", "");
-        p.track_count = item.value("trackCount", 0);
-        p.special_type = item.value("specialType", 0);
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.track_count = (int)jsonInt(item, "trackCount");
+        p.special_type = (int)jsonInt(item, "specialType");
         p.subscribed = true;
-        p.cover_url = item.value("coverImgUrl", "");
+        p.cover_url = jsonStr(item, "coverImgUrl");
         if (item.contains("creator") && item["creator"].is_object()) {
-            p.creator = item["creator"].value("nickname", "");
+            p.creator = jsonStr(item["creator"], "nickname");
         }
         if (p.id != 0) out.push_back(p);
     }
@@ -302,8 +324,8 @@ bool NetEaseApi::profileBackground(std::string &url) {
     const auto &d = j["data"];
     if (!d.contains("backgroundValue") || !d["backgroundValue"].is_object()) return false;
     const auto &bg = d["backgroundValue"];
-    url = bg.value("fullPicValue", "");
-    if (url.empty()) url = bg.value("singlePicValue", "");
+    url = jsonStr(bg, "fullPicValue");
+    if (url.empty()) url = jsonStr(bg, "singlePicValue");
     return !url.empty();
 }
 
@@ -313,11 +335,11 @@ bool NetEaseApi::toplists(std::vector<Playlist> &out) {
     out.clear();
     for (const auto &item : j["list"]) {
         Playlist p;
-        p.id = item.value("id", (uint64_t)0);
-        p.name = item.value("name", "");
-        p.track_count = item.value("trackCount", 0);
-        p.creator = item.value("updateFrequency", "");
-        p.cover_url = item.value("coverImgUrl", "");
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.track_count = (int)jsonInt(item, "trackCount");
+        p.creator = jsonStr(item, "updateFrequency");
+        p.cover_url = jsonStr(item, "coverImgUrl");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
@@ -333,11 +355,11 @@ bool NetEaseApi::recommendPlaylists(std::vector<Playlist> &out) {
     out.clear();
     for (const auto &item : *items) {
         Playlist p;
-        p.id = item.value("id", (uint64_t)0);
-        p.name = item.value("name", "");
-        p.track_count = item.value("trackCount", 0);
-        p.creator = item.value("copywriter", "");
-        p.cover_url = item.value("picUrl", "");
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.track_count = (int)jsonInt(item, "trackCount");
+        p.creator = jsonStr(item, "copywriter");
+        p.cover_url = jsonStr(item, "picUrl");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
@@ -358,7 +380,7 @@ bool NetEaseApi::playlistDetail(uint64_t id, std::vector<Song> &out, std::string
         j["playlist"].contains("tracks") && j["playlist"]["tracks"].is_array() &&
         !j["playlist"]["tracks"].empty()) {
         const auto &pl = j["playlist"];
-        name = pl.value("name", "");
+        name = jsonStr(pl, "name");
         out.clear();
         for (const auto &item : pl["tracks"]) out.push_back(parseSong(item));
         return !out.empty();
@@ -372,7 +394,7 @@ bool NetEaseApi::playlistDetail(uint64_t id, std::vector<Song> &out, std::string
                          {{"id", sid}, {"n", "1000"}, {"s", "8"}});
     if (!fallback.contains("playlist") || !fallback["playlist"].is_object()) return false;
     const auto &pl = fallback["playlist"];
-    if (name.empty()) name = pl.value("name", "");
+    if (name.empty()) name = jsonStr(pl, "name");
     out.clear();
     if (pl.contains("tracks") && pl["tracks"].is_array()) {
         for (const auto &item : pl["tracks"]) out.push_back(parseSong(item));
@@ -396,16 +418,16 @@ bool NetEaseApi::songUrl(uint64_t id, int br, std::string &url, std::string &err
 
     if (j.contains("data") && j["data"].is_array() && !j["data"].empty()) {
         const auto &first = j["data"][0];
-        url = first.value("url", "");
+        url = jsonStr(first, "url");
         // Log what the server actually handed back; cloud uploads often come
         // back as a different container than the level we asked for.
         logf("[api] url id=%llu code=%d fee=%d br=%d type=%s level=%s size=%lld url=%d",
-             (unsigned long long)id, first.value("code", 0), first.value("fee", 0),
-             first.value("br", 0), first.value("type", "").c_str(),
-             first.value("level", "").c_str(),
-             (long long)first.value("size", 0LL), (int)!url.empty());
+             (unsigned long long)id, (int)jsonInt(first, "code"), (int)jsonInt(first, "fee"),
+             (int)jsonInt(first, "br"), jsonStr(first, "type").c_str(),
+             jsonStr(first, "level").c_str(),
+             (long long)jsonInt(first, "size"), (int)!url.empty());
         if (!url.empty()) return true;
-        if (first.value("code", 0) == 404 || first.value("fee", 0) != 0) {
+        if ((int)jsonInt(first, "code") == 404 || (int)jsonInt(first, "fee") != 0) {
             error = "该歌曲暂无版权或需要 VIP";
             return false;
         }
@@ -424,10 +446,10 @@ bool NetEaseApi::lyric(uint64_t id, std::string &lrc, std::string &translated) {
     lrc.clear();
     translated.clear();
     if (j.contains("lrc") && j["lrc"].is_object()) {
-        lrc = j["lrc"].value("lyric", "");
+        lrc = jsonStr(j["lrc"], "lyric");
     }
     if (j.contains("tlyric") && j["tlyric"].is_object()) {
-        translated = j["tlyric"].value("lyric", "");
+        translated = jsonStr(j["tlyric"], "lyric");
     }
     return !lrc.empty();
 }
@@ -442,12 +464,12 @@ bool NetEaseApi::search(const std::string &keyword, std::vector<Song> &out) {
         j["data"]["resources"].is_array()) {
         for (const auto &item : j["data"]["resources"]) {
             if (!item.is_object()) continue;
-            std::string type = item.value("resourceType", "");
+            std::string type = jsonStr(item, "resourceType");
             if (type != "song") continue;
             if (!item.contains("baseInfo") || !item["baseInfo"].is_object()) continue;
             Song song = parseSong(item["baseInfo"]);
             if (song.id == 0) {
-                song.id = item.value("resourceId", (uint64_t)0);
+                song.id = (uint64_t)jsonInt(item, "resourceId");
             }
             if (song.id != 0) out.push_back(song);
         }
@@ -467,7 +489,7 @@ bool NetEaseApi::search(const std::string &keyword, std::vector<Song> &out) {
 bool NetEaseApi::likeSong(uint64_t id, bool like) {
     auto j = call("song/like",
                   {{"trackId", std::to_string(id)}, {"like", like ? "true" : "false"}});
-    return j.value("code", 0) == 200;
+    return (int)jsonInt(j, "code") == 200;
 }
 
 bool NetEaseApi::albumSongs(uint64_t album_id, std::vector<Song> &out, std::string &name,
@@ -479,8 +501,8 @@ bool NetEaseApi::albumSongs(uint64_t album_id, std::vector<Song> &out, std::stri
     if (!j.contains("album") || !j["album"].is_object()) return false;
 
     const auto &al = j["album"];
-    name = al.value("name", "");
-    cover = al.value("picUrl", "");
+    name = jsonStr(al, "name");
+    cover = jsonStr(al, "picUrl");
 
     if (j.contains("songs") && j["songs"].is_array()) {
         for (const auto &item : j["songs"]) {
@@ -498,7 +520,7 @@ bool NetEaseApi::artistHotSongs(uint64_t artist_id, std::vector<Song> &out, std:
     out.clear();
     name.clear();
     if (j.contains("artist") && j["artist"].is_object()) {
-        name = j["artist"].value("name", "");
+        name = jsonStr(j["artist"], "name");
     }
     if (j.contains("hotSongs") && j["hotSongs"].is_array()) {
         for (const auto &item : j["hotSongs"]) out.push_back(parseSong(item));
@@ -513,11 +535,11 @@ bool NetEaseApi::playlistSquare(std::vector<Playlist> &out) {
     out.clear();
     for (const auto &item : j["list"]) {
         Playlist p;
-        p.id = item.value("id", (uint64_t)0);
-        p.name = item.value("name", "");
-        p.track_count = item.value("trackCount", 0);
-        p.cover_url = item.value("coverImgUrl", "");
-        p.creator = item.value("updateFrequency", "");
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.track_count = (int)jsonInt(item, "trackCount");
+        p.cover_url = jsonStr(item, "coverImgUrl");
+        p.creator = jsonStr(item, "updateFrequency");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
@@ -535,20 +557,25 @@ bool NetEaseApi::homeBlocks(std::vector<HomeBlock> &out) {
     out.clear();
     for (const auto &item : j["data"]["blocks"]) {
         if (!item.is_object()) continue;
+
         HomeBlock b;
-        b.showType = item.value("showType", "");
-        b.resourceType = item.value("resourceType", "");
-        b.title = item.value("title", "");
-        b.subtitle = item.value("subTitle", "");
-        b.track_count = item.value("playCount", 0);
-        std::string rid = item.value("resourceId", "");
+        b.showType = jsonStr(item, "showType");
+        b.resourceType = jsonStr(item, "resourceType");
+        b.title = jsonStr(item, "title");
+        b.subtitle = jsonStr(item, "subTitle");
+        b.track_count = (int)jsonInt(item, "playCount");
+
+        std::string rid = jsonStr(item, "resourceId");
         if (!rid.empty()) b.id = strtoull(rid.c_str(), nullptr, 10);
-        if (item.contains("imageInfo") && item["imageInfo"].is_object()) {
-            const auto &img = item["imageInfo"];
-            b.cover = img.value("url", "");
-            if (b.cover.empty()) b.cover = img.value("onImageIconUrl", "");
-            if (b.subtitle.empty()) b.subtitle = img.value("onImageText", "");
+
+        auto img_it = item.find("imageInfo");
+        if (img_it != item.end() && img_it->is_object()) {
+            const auto &img = *img_it;
+            b.cover = jsonStr(img, "url");
+            if (b.cover.empty()) b.cover = jsonStr(img, "onImageIconUrl");
+            if (b.subtitle.empty()) b.subtitle = jsonStr(img, "onImageText");
         }
+
         if (b.title.empty()) continue;
         out.push_back(b);
     }
