@@ -645,6 +645,10 @@ void App::pollTouch() {
         const HidTouchState &touch = state.touches[0];
         float x = (float)touch.x;
         float y = (float)touch.y;
+        if (!touch_logged_) {
+            logf("[touch] first contact x=%.0f y=%.0f fingers=%d", x, y, (int)state.count);
+            touch_logged_ = true;
+        }
 
         if (!touch_active_) {
             touch_active_ = true;

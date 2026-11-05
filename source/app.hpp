@@ -92,6 +92,7 @@ private:
     bool running_ = true;
 
     HidTouchScreenState touch_state_{};
+    bool touch_logged_ = false;
     bool touch_active_ = false;
     bool touch_dragged_ = false;
     float touch_last_x_ = 0;
