@@ -186,13 +186,20 @@ bool NetEaseApi::loggedIn() const {
     return !music_u_.empty();
 }
 
-bool NetEaseApi::account(uint64_t &uid, std::string &nickname) {
+bool NetEaseApi::account(uint64_t &uid, std::string &nickname, std::string *avatar,
+                         std::string *vip) {
     auto j = call("nuser/account/get", nullptr);
     if (!j.contains("account") || j["account"].is_null()) return false;
     uid = j["account"].value("id", (uint64_t)0);
     uid_ = uid;
     if (j.contains("profile") && j["profile"].is_object()) {
-        nickname = j["profile"].value("nickname", "");
+        const auto &p = j["profile"];
+        nickname = p.value("nickname", "");
+        if (avatar) *avatar = p.value("avatarUrl", "");
+        if (vip) {
+            int vip_type = p.value("vipType", 0);
+            if (vip_type > 0) *vip = "黑胶 VIP";
+        }
     }
     return uid != 0;
 }
@@ -252,6 +259,7 @@ bool NetEaseApi::userPlaylists(std::vector<Playlist> &out) {
         p.name = item.value("name", "");
         p.track_count = item.value("trackCount", 0);
         p.special_type = item.value("specialType", 0);
+        p.subscribed = item.value("subscribed", false);
         p.cover_url = item.value("coverImgUrl", "");
         if (item.contains("creator") && item["creator"].is_object()) {
             p.creator = item["creator"].value("nickname", "");
@@ -259,6 +267,44 @@ bool NetEaseApi::userPlaylists(std::vector<Playlist> &out) {
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
+}
+
+bool NetEaseApi::collectedPlaylists(std::vector<Playlist> &out) {
+    auto j = call("user/playlist/collect",
+                  {{"userId", std::to_string(uid_)}, {"limit", "1000"}});
+    const nlohmann::json *items = nullptr;
+    if (j.contains("data") && j["data"].is_object() &&
+        j["data"].contains("playlist") && j["data"]["playlist"].is_array()) {
+        items = &j["data"]["playlist"];
+    }
+    if (!items) return false;
+
+    out.clear();
+    for (const auto &item : *items) {
+        Playlist p;
+        p.id = item.value("id", (uint64_t)0);
+        p.name = item.value("name", "");
+        p.track_count = item.value("trackCount", 0);
+        p.special_type = item.value("specialType", 0);
+        p.subscribed = true;
+        p.cover_url = item.value("coverImgUrl", "");
+        if (item.contains("creator") && item["creator"].is_object()) {
+            p.creator = item["creator"].value("nickname", "");
+        }
+        if (p.id != 0) out.push_back(p);
+    }
+    return !out.empty();
+}
+
+bool NetEaseApi::profileBackground(std::string &url) {
+    auto j = call("user/page/pretend/info", {{"userId", std::to_string(uid_)}});
+    if (!j.contains("data") || !j["data"].is_object()) return false;
+    const auto &d = j["data"];
+    if (!d.contains("backgroundValue") || !d["backgroundValue"].is_object()) return false;
+    const auto &bg = d["backgroundValue"];
+    url = bg.value("fullPicValue", "");
+    if (url.empty()) url = bg.value("singlePicValue", "");
+    return !url.empty();
 }
 
 bool NetEaseApi::toplists(std::vector<Playlist> &out) {
@@ -422,6 +468,91 @@ bool NetEaseApi::likeSong(uint64_t id, bool like) {
     auto j = call("song/like",
                   {{"trackId", std::to_string(id)}, {"like", like ? "true" : "false"}});
     return j.value("code", 0) == 200;
+}
+
+bool NetEaseApi::albumSongs(uint64_t album_id, std::vector<Song> &out, std::string &name,
+                           std::string &cover) {
+    auto j = call("v1/album/" + std::to_string(album_id), nlohmann::json());
+    out.clear();
+    name.clear();
+    cover.clear();
+    if (!j.contains("album") || !j["album"].is_object()) return false;
+
+    const auto &al = j["album"];
+    name = al.value("name", "");
+    cover = al.value("picUrl", "");
+
+    if (j.contains("songs") && j["songs"].is_array()) {
+        for (const auto &item : j["songs"]) {
+            Song s = parseSong(item);
+            if (s.album.empty()) s.album = name;
+            if (s.cover_url.empty()) s.cover_url = cover;
+            out.push_back(s);
+        }
+    }
+    return !out.empty();
+}
+
+bool NetEaseApi::artistHotSongs(uint64_t artist_id, std::vector<Song> &out, std::string &name) {
+    auto j = call("v1/artist/" + std::to_string(artist_id), nlohmann::json());
+    out.clear();
+    name.clear();
+    if (j.contains("artist") && j["artist"].is_object()) {
+        name = j["artist"].value("name", "");
+    }
+    if (j.contains("hotSongs") && j["hotSongs"].is_array()) {
+        for (const auto &item : j["hotSongs"]) out.push_back(parseSong(item));
+    }
+    return !out.empty();
+}
+
+bool NetEaseApi::playlistSquare(std::vector<Playlist> &out) {
+    // Toplists double as a browsable "square": 65 curated playlists.
+    auto j = call("toplist", nlohmann::json());
+    if (!j.contains("list") || !j["list"].is_array()) return false;
+    out.clear();
+    for (const auto &item : j["list"]) {
+        Playlist p;
+        p.id = item.value("id", (uint64_t)0);
+        p.name = item.value("name", "");
+        p.track_count = item.value("trackCount", 0);
+        p.cover_url = item.value("coverImgUrl", "");
+        p.creator = item.value("updateFrequency", "");
+        if (p.id != 0) out.push_back(p);
+    }
+    return !out.empty();
+}
+
+bool NetEaseApi::homeBlocks(std::vector<HomeBlock> &out) {
+    auto j = call("music/multi/terminal/tv/homepage/get", nlohmann::json(),
+                  {{"cursor", "0"},
+                   {"next", ""},
+                   {"positionCode", "IOT_TV_HOME_RECOMMEND_PAGE"},
+                   {"sendVipScene", ""}});
+    if (!j.contains("data") || !j["data"].is_object()) return false;
+    if (!j["data"].contains("blocks") || !j["data"]["blocks"].is_array()) return false;
+
+    out.clear();
+    for (const auto &item : j["data"]["blocks"]) {
+        if (!item.is_object()) continue;
+        HomeBlock b;
+        b.showType = item.value("showType", "");
+        b.resourceType = item.value("resourceType", "");
+        b.title = item.value("title", "");
+        b.subtitle = item.value("subTitle", "");
+        b.track_count = item.value("playCount", 0);
+        std::string rid = item.value("resourceId", "");
+        if (!rid.empty()) b.id = strtoull(rid.c_str(), nullptr, 10);
+        if (item.contains("imageInfo") && item["imageInfo"].is_object()) {
+            const auto &img = item["imageInfo"];
+            b.cover = img.value("url", "");
+            if (b.cover.empty()) b.cover = img.value("onImageIconUrl", "");
+            if (b.subtitle.empty()) b.subtitle = img.value("onImageText", "");
+        }
+        if (b.title.empty()) continue;
+        out.push_back(b);
+    }
+    return !out.empty();
 }
 
 } // namespace ntv

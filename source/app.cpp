@@ -264,7 +264,15 @@ void App::pollLogin() {
 }
 
 bool App::loadAccount() {
-    return api_.account(uid_, nickname_);
+    std::string avatar;
+    vip_text_.clear();
+    bool ok = api_.account(uid_, nickname_, &avatar, &vip_text_);
+    if (ok && !avatar.empty()) {
+        avatar_url_ = avatar;
+        requestCover(avatar);
+        avatar_ = ui_.cachedImage(avatar);
+    }
+    return ok;
 }
 
 void App::loadHome() {
@@ -289,6 +297,17 @@ void App::loadHome() {
     if (!ok) toast("加载失败，按 + 重试");
 
     loadDiscover();
+    api_.homeBlocks(home_blocks_);
+    for (const auto &b : home_blocks_) requestCover(b.cover);
+
+    // Prefetch so the "我的" tiles and the player pill already have artwork.
+    if (recent_.empty()) api_.recentSongs(recent_);
+    if (toplists_.empty()) api_.toplists(toplists_);
+    for (const auto &song : recent_) requestCover(song.cover_url);
+    for (const auto &pl : toplists_) requestCover(pl.cover_url);
+    for (const auto &pl : playlists_) requestCover(pl.cover_url);
+    for (const auto &pl : discover_playlists_) requestCover(pl.cover_url);
+    for (const auto &song : daily_) requestCover(song.cover_url);
 }
 
 void App::loadRecent() {
@@ -939,7 +958,7 @@ void App::handleTap(float x, float y) {
 
     if (page_ == Page::Mine) {
         // logout button
-        if (y >= 250 && y <= 296 && x >= 240 && x <= 390) {
+        if (y >= 190 && y <= 242 && x >= 1000 && x <= 1170) {
             requestLogout();
             return;
         }
@@ -1145,6 +1164,7 @@ void App::pollInput() {
 void App::update() {
     pollLogin();
     if (!pending_covers_.empty()) pollCovers();
+    if (!avatar_url_.empty() && !avatar_) avatar_ = ui_.cachedImage(avatar_url_);
 
     if (confirm_logout_ && clockSeconds() > logout_confirm_until_) {
         confirm_logout_ = false;
@@ -1255,11 +1275,14 @@ void App::activateCard() {
         if (card_index_ == 0) {
             loadRecent();
             if (!recent_.empty()) {
-                play_queue_ = recent_;
-                screen_ = Screen::Playlist;
                 tracks_ = recent_;
                 tracks_title_ = "最近播放";
+                tracks_cover_ = recent_[0].cover_url;
                 track_sel_ = 0;
+                play_queue_ = recent_;
+                screen_ = Screen::Playlist;
+            } else {
+                toast("最近播放为空");
             }
         } else if (card_index_ == 1) {
             if (liked_playlist_id_ != 0) openPlaylist(liked_playlist_id_, "我喜欢的音乐");
@@ -1269,18 +1292,25 @@ void App::activateCard() {
                 std::vector<Playlist> lists;
                 if (api_.userPlaylists(lists)) playlists_ = lists;
             }
-            if (playlists_.empty()) {
-                toast("歌单加载失败");
+            if (playlists_.empty()) toast("歌单加载失败");
+            else { show_playlist_grid_ = true; mine_section_ = 0; mine_sel_ = 0; mine_focus_ = 0; }
+        } else if (card_index_ == 3) {
+            if (toplists_.empty()) loadToplists();
+            if (!toplists_.empty()) {
+                tracks_.clear();
+                tracks_title_ = "排行榜";
+                show_toplists_ = true;
+                top_sel_ = 0;
             } else {
-                show_playlist_grid_ = true;
-                mine_section_ = 0;
-                mine_sel_ = 0;
-                mine_focus_ = 0;
+                toast("排行榜加载失败");
             }
-        } else {
+        } else if (card_index_ == 4) {
             toast("关注歌手需要额外权限，当前会话不可用");
+        } else {
+            toast("收藏视频暂未实现");
         }
     }
+
 }
 
 void App::switchPage(Page page) {
@@ -1322,13 +1352,17 @@ void App::requestCover(const std::string &url) {
 }
 
 void App::pollCovers() {
-    for (const auto &url : pending_covers_) {
+    // Cap per frame: covers are 100-200 KB each and the UI thread must stay responsive.
+    int budget = 4;
+    auto it = pending_covers_.begin();
+    while (it != pending_covers_.end() && budget-- > 0) {
+        const std::string url = *it;
+        it = pending_covers_.erase(it);
         std::vector<unsigned char> bytes;
         if (http_.download(url, bytes)) {
             ui_.textureFromMemory(url, bytes);
         }
     }
-    pending_covers_.clear();
 }
 
 SDL_Texture *App::iconTexture(const char *name) {
@@ -1500,13 +1534,23 @@ void App::drawScrollbar(int x, int y, int height, int visible, int total, int fi
     ui_.rect(x, y + offset, 4, bar_height, rgba(90, 90, 100));
 }
 
-std::vector<Playlist> App::mineSectionPlaylists() const {
+std::vector<Playlist> App::mineSectionPlaylists() {
+    if (mine_section_ == 1) {
+        // Collected playlists come from their own endpoint; the merged
+        // user/playlist result does not reliably flag subscribed.
+        if (collected_.empty() && !collected_loaded_) {
+            redrawNow();
+            std::vector<Playlist> lists;
+            if (api_.collectedPlaylists(lists)) collected_ = lists;
+            collected_loaded_ = true;
+        }
+        return collected_;
+    }
+
     std::vector<Playlist> out;
     for (const auto &p : playlists_) {
-        if (p.special_type == 5) continue;          // skip "我喜欢的音乐"
-        bool collected = p.creator.empty() || p.creator != nickname_;
-        // subscribed flag is not exposed yet; fall back to creator mismatch
-        (void)collected;
+        if (p.special_type == 5) continue;      // "我喜欢的音乐" has its own entry
+        if (p.subscribed) continue;             // belongs to the collected tab
         out.push_back(p);
     }
     return out;
@@ -1571,24 +1615,40 @@ void App::drawHome() {
     if (page_ == Page::Recommend) {
         ui_.text(56, 118, "夜深了", 34, kText);
 
-        const char *titles[4] = {"继续播放", "歌单推荐", "每日推荐", "私人漫游"};
-        const char *descs[4] = {nullptr, nullptr, "符合你口味的新鲜好歌",
-                                "多种听歌模式随心播放"};
-        int y = 186, w = 286, h = 300, gap = 22, x0 = 56;
+        // Cards come from homepage/get; fall back to the fixed four if empty.
+        struct Fallback { const char *title; const char *desc; };
+        const Fallback fb[4] = {
+            {"继续播放", nullptr}, {"歌单推荐", nullptr},
+            {"每日推荐", "符合你口味的新鲜好歌"}, {"私人漫游", "多种听歌模式随心播放"},
+        };
 
-        for (int i = 0; i < 4; ++i) {
+        int y = 186, w = 286, h = 300, gap = 22, x0 = 56;
+        int count = home_blocks_.empty() ? 4 : std::min((int)home_blocks_.size(), 4);
+
+        for (int i = 0; i < count; ++i) {
             int x = x0 + i * (w + gap);
+
             std::string art;
-            if (i == 0) art = cover_key_;
-            else if (i == 1) art = discover_playlists_.empty() ? "" : discover_playlists_[0].cover_url;
-            else if (i == 2) art = daily_.empty() ? "" : daily_[0].cover_url;
+            std::string title;
+            std::string desc;
+            if (home_blocks_.empty()) {
+                if (i == 0) art = cover_key_;
+                else if (i == 2) art = daily_.empty() ? "" : daily_[0].cover_url;
+                title = fb[i].title;
+                if (fb[i].desc) desc = fb[i].desc;
+            } else {
+                const HomeBlock &b = home_blocks_[i];
+                art = b.cover;
+                title = b.title;
+                desc = b.subtitle;
+            }
 
             drawCover(art, x, y, w, h);
             ui_.rect(x, y, w, h, rgba(0, 0, 0, 70));
-            ui_.text(x + 20, y + 20, titles[i], 26, kText);
-            if (descs[i]) {
+            ui_.text(x + 20, y + 20, utf8Truncate(title, 10), 26, kText);
+            if (!desc.empty()) {
                 ui_.rect(x, y + h - 56, w, 56, rgba(0, 0, 0, 160));
-                ui_.text(x + 20, y + h - 42, descs[i], 15, kTextDim);
+                ui_.text(x + 20, y + h - 42, utf8Truncate(desc, 14), 15, kTextDim);
             }
             if (card_index_ == i && !nav_focused_) {
                 ui_.rectOutline(x - 4, y - 4, w + 8, h + 8, kAccent, 3);
@@ -1596,32 +1656,57 @@ void App::drawHome() {
         }
 
         ui_.text(56, 552, "你的专属推荐歌单", 28, kText);
-        for (int i = 0; i < 5 && i < (int)discover_playlists_.size(); ++i) {
-            const Playlist &p = discover_playlists_[i];
-            int x = 56 + i * 238;
-            drawCover(p.cover_url, x, 606, 196, 196);
+        char hint[64];
+        snprintf(hint, sizeof(hint), "共 %d 个", (int)discover_playlists_.size());
+        ui_.textRight(1180, 560, hint, 15, kHint);
+
+        for (int i = 0; i < 6; ++i) {
+            int index = strip_scroll_ + i;
+            if (index >= (int)discover_playlists_.size()) break;
+            const Playlist &p = discover_playlists_[index];
+            int x = 56 + i * 200;
+            drawCover(p.cover_url, x, 600, 180, 180);
+            if (i == 0 && discover_sel_ == index) {
+                ui_.rectOutline(x - 3, 597, 186, 186, kAccent, 3);
+            }
         }
 
     } else if (page_ == Page::Mine) {
-        ui_.rect(56, 118, 700, 200, rgba(255, 255, 255, 14));
-        ui_.rect(88, 150, 130, 130, rgba(255, 255, 255, 30));
-        ui_.text(240, 156, nickname_.empty() ? "未登录" : utf8Truncate(nickname_, 18), 34, kText);
+        // Profile card: avatar on the left, nickname + UID to its right.
+        ui_.rect(56, 118, 1168, 200, rgba(255, 255, 255, 14));
+
+        if (avatar_) {
+            ui_.image(avatar_, 92, 148, 132, 132);
+            ui_.circle(0, 0, 0, kBg);  // no-op, keeps layout stable
+        } else {
+            ui_.circle(158, 214, 66, rgba(255, 255, 255, 30));
+            ui_.textCentered(158, 190, "头像", 18, kHint);
+        }
+
+        ui_.text(256, 158, nickname_.empty() ? "未登录" : utf8Truncate(nickname_, 18), 34, kText);
 
         char uid_text[64];
         snprintf(uid_text, sizeof(uid_text), "UID %llu", (unsigned long long)uid_);
-        ui_.text(240, 206, uid_text, 16, kSub);
+        ui_.text(256, 208, uid_text, 17, kSub);
+        if (!vip_text_.empty()) {
+            ui_.rect(256, 240, ui_.textWidth(vip_text_, 15) + 24, 30, rgba(230, 180, 90, 60));
+            ui_.text(268, 245, vip_text_, 15, rgba(240, 200, 120));
+        }
 
-        ui_.rect(240, 250, 150, 46, rgba(255, 255, 255, 30));
-        ui_.textCentered(315, 261, "退出登录", 16, kTextDim);
+        ui_.rect(1000, 190, 170, 52, rgba(255, 255, 255, 30));
+        ui_.textCentered(1085, 203, "退出登录", 17, kTextDim);
 
-        ui_.rect(800, 118, 424, 200, rgba(46, 62, 140));
+        const char *entries[6] = {"最近播放", "我喜欢的", "我的歌单",
+                                  "排行榜", "关注歌手", "收藏视频"};
+        for (int i = 0; i < 6; ++i) {
+            int col = i % 3;
+            int row = i / 3;
+            int x = 56 + col * 300;
+            int y = 366 + row * 176;
+            int w = 280, h = 156;
 
-        const char *entries[4] = {"最近播放", "我喜欢的", "我的歌单", "关注歌手"};
-        for (int i = 0; i < 4; ++i) {
-            int x = 56 + i * 300;
-            int y = 366;
-            ui_.rect(x, y, 280, 280, rgba(255, 255, 255, 14));
-            ui_.text(x + 28, y + 28, entries[i], 27, kText);
+            ui_.rect(x, y, w, h, rgba(255, 255, 255, 14));
+            ui_.text(x + 24, y + 22, entries[i], 24, kText);
 
             std::string art;
             if (i == 0 && !recent_.empty()) art = recent_[0].cover_url;
@@ -1629,11 +1714,13 @@ void App::drawHome() {
                 for (const auto &pl : playlists_) {
                     if (pl.id == liked_playlist_id_) { art = pl.cover_url; break; }
                 }
+            } else if (i == 3 && !toplists_.empty()) {
+                art = toplists_[0].cover_url;
             }
-            drawCover(art, x + 70, y + 110, 140, 140);
+            drawCover(art, x + 174, y + 18, 90, 90);
 
             if (card_index_ == i && !nav_focused_) {
-                ui_.rectOutline(x - 4, y - 4, 288, 288, kAccent, 3);
+                ui_.rectOutline(x - 4, y - 4, w + 8, h + 8, kAccent, 3);
             }
         }
     }

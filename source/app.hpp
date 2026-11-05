@@ -79,7 +79,7 @@ private:
     void drawLogin();
     void drawHome();
     void drawMineGrid();
-    std::vector<Playlist> mineSectionPlaylists() const;
+    std::vector<Playlist> mineSectionPlaylists();
     void drawPlaylist();
     void drawNowBar();
     void drawLyrics();
@@ -169,6 +169,9 @@ private:
     bool liked_ids_loaded_ = false;
     uint64_t current_song_id_ = 0;
     SDL_Texture *cover_ = nullptr;
+    SDL_Texture *avatar_ = nullptr;
+    std::string avatar_url_;
+    std::string vip_text_;
     std::string cover_key_;
     int quality_index_ = 2;
     int daily_sel_ = 0;
@@ -195,13 +198,18 @@ private:
     std::set<std::string> pending_covers_;
     std::map<std::string, SDL_Texture *> icons_;
     std::vector<Playlist> discover_playlists_;
+    std::vector<HomeBlock> home_blocks_;
     int discover_sel_ = 0;
+    int strip_scroll_ = 0;
     int discover_scroll_ = 0;
     std::vector<Playlist> mine_playlists_;   // for the "我的歌单" grid
     int mine_sel_ = 0;
     int mine_section_ = 0;      // 0 = 创建的歌单, 1 = 收藏的歌单
-    int mine_focus_ = 0;        // 0 = section tabs, 1 = grid
+    int mine_focus_ = 0;
+    std::vector<Playlist> collected_;
+    bool collected_loaded_ = false;        // 0 = section tabs, 1 = grid
     bool show_playlist_grid_ = false;
+    bool show_toplists_ = false;
     int mine_scroll_ = 0;
     uint64_t viewed_playlist_id_ = 0;
 

@@ -23,8 +23,19 @@ struct Playlist {
     std::string name;
     int track_count = 0;
     int special_type = 0;
+    bool subscribed = false;
     std::string creator;
     std::string cover_url;
+};
+
+struct HomeBlock {
+    std::string showType;
+    std::string resourceType;
+    std::string title;
+    std::string subtitle;
+    std::string cover;
+    uint64_t id = 0;
+    int track_count = 0;
 };
 
 class NetEaseApi {
@@ -33,7 +44,8 @@ public:
 
     bool loggedIn() const;
 
-    bool account(uint64_t &uid, std::string &nickname);
+    bool account(uint64_t &uid, std::string &nickname,
+                  std::string *avatar = nullptr, std::string *vip = nullptr);
 
     bool qrCreate(std::string &unikey);
     int qrCheck(const std::string &unikey);
@@ -41,6 +53,8 @@ public:
     bool dailySongs(std::vector<Song> &out);
     bool recentSongs(std::vector<Song> &out);
     bool userPlaylists(std::vector<Playlist> &out);
+    bool collectedPlaylists(std::vector<Playlist> &out);
+    bool profileBackground(std::string &url);
     bool toplists(std::vector<Playlist> &out);
     bool recommendPlaylists(std::vector<Playlist> &out);
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
@@ -48,6 +62,13 @@ public:
     bool lyric(uint64_t id, std::string &lrc, std::string &translated);
     bool search(const std::string &keyword, std::vector<Song> &out);
     bool likeSong(uint64_t id, bool like);
+
+    // Extra browse pages
+    bool albumSongs(uint64_t album_id, std::vector<Song> &out, std::string &name,
+                    std::string &cover);
+    bool artistHotSongs(uint64_t artist_id, std::vector<Song> &out, std::string &name);
+    bool playlistSquare(std::vector<Playlist> &out);
+    bool homeBlocks(std::vector<HomeBlock> &out);
 
     std::string deviceId() const { return device_id_; }
     void setMusicU(const std::string &value);
