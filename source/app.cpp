@@ -305,6 +305,46 @@ void App::loadRecommend() {
     rec_scroll_ = 0;
 }
 
+void App::requestLogout() {
+    if (confirm_logout_ && clockSeconds() <= logout_confirm_until_) {
+        logout();
+        return;
+    }
+    confirm_logout_ = true;
+    logout_confirm_until_ = clockSeconds() + 3.0;
+    toast("再按一次确认退出账号");
+}
+
+void App::logout() {
+    api_.logout();
+    nickname_.clear();
+    uid_ = 0;
+    liked_ids_.clear();
+    liked_ids_loaded_ = false;
+    liked_playlist_id_ = 0;
+    liked_track_count_ = 0;
+    daily_.clear();
+    playlists_.clear();
+    recent_.clear();
+    toplists_.clear();
+    recommend_.clear();
+    tracks_.clear();
+    play_queue_.clear();
+    playing_index_ = -1;
+    player_.stop();
+    current_song_id_ = 0;
+    cover_ = nullptr;
+    cover_key_.clear();
+    lyrics_.clear();
+    show_lyrics_ = false;
+    confirm_logout_ = false;
+    logout_confirm_until_ = 0;
+    tab_ = 0;
+    logf("[login] logged out, credentials cleared");
+    startLogin();
+    toast("已退出账号");
+}
+
 void App::ensureLikedIds() {
     if (liked_ids_loaded_ || liked_playlist_id_ == 0) return;
     redrawNow();
@@ -729,6 +769,16 @@ void App::handleTap(float x, float y) {
             return;
         }
 
+        {
+            int by = sidebar_collapsed_ ? 552 : 452;
+            int bx = sidebar_collapsed_ ? 20 : 18;
+            int bw = sidebar_collapsed_ ? 48 : w - 36;
+            if (y >= by && y <= by + 40 && x >= bx && x <= bx + bw) {
+                requestLogout();
+                return;
+            }
+        }
+
         for (int i = 0; i < 7; ++i) {
             int top = 112 + i * 54;
             if (y >= top && y <= top + 44) {
@@ -889,6 +939,7 @@ void App::pollInput() {
         if (pressed(HidNpadButton_Right) && sidebar_focus_) sidebar_focus_ = false;
 
         if (sidebar_focus_) {
+            if (pressed(HidNpadButton_Minus)) requestLogout();
             if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
                 tab_ = (tab_ + 6) % 7;
                 ensureTabLoaded();
@@ -964,6 +1015,10 @@ void App::pollInput() {
 
 void App::update() {
     pollLogin();
+
+    if (confirm_logout_ && clockSeconds() > logout_confirm_until_) {
+        confirm_logout_ = false;
+    }
 
     std::string error = player_.error();
     if (player_.state() == Player::State::Error && !error.empty() && error != last_player_error_) {
@@ -1045,12 +1100,26 @@ void App::drawSidebar() {
         }
     }
 
+    // Logout button sits right above the help text.
+    {
+        int by = sidebar_collapsed_ ? 552 : 452;
+        int bx = sidebar_collapsed_ ? 20 : 18;
+        int bw = sidebar_collapsed_ ? 48 : w - 36;
+        ui_.rect(bx, by, bw, 40, confirm_logout_ ? kAccent : rgba(46, 46, 56));
+        if (sidebar_collapsed_) {
+            ui_.textCentered(bx + bw / 2, by + 11, "退", 18, kText);
+        } else {
+            ui_.textCentered(bx + bw / 2, by + 11,
+                             confirm_logout_ ? "再按一次确认" : "退出账号", 17, kText);
+        }
+    }
+
     if (!sidebar_collapsed_) {
         ui_.text(26, 498, "A 确认   B 返回", 14, kSub);
         ui_.text(26, 520, "X 暂停   Y 歌词", 14, kSub);
         ui_.text(26, 542, "L/R 切歌  ZL/ZR 音量", 14, kSub);
         ui_.text(26, 564, "R3 红心  L3 音质  - 模式", 14, kSub);
-        ui_.text(26, 586, "+ 收起侧栏  左右切焦点", 14, kSub);
+        ui_.text(26, 586, "+ 收起侧栏  - 退出账号", 14, kSub);
     }
 
     if (sidebar_focus_) {

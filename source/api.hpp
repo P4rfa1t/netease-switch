@@ -50,6 +50,7 @@ public:
 
     std::string deviceId() const { return device_id_; }
     void setMusicU(const std::string &value);
+    void logout();
     std::string musicU() const { return music_u_; }
 
     static Song parseSong(const nlohmann::json &j);

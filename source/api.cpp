@@ -87,11 +87,23 @@ void NetEaseApi::setMusicU(const std::string &value) {
     writeFile(kMusicUPath, value);
 }
 
+void NetEaseApi::logout() {
+    // Best effort: tell the server, then always clear local state.
+    call("logout", nullptr);
+
+    music_u_.clear();
+    uid_ = 0;
+    http_.setCookie("MUSIC_U", "");
+    remove(kMusicUPath);
+}
+
 std::string NetEaseApi::cookieHeader() const {
+    // mobilename is URL-encoded exactly once (the client uses URLEncoder); a raw
+    // "Nintendo%20Switch" would be encoded twice and show up literally on the phone.
     std::string out = "os=android; appver=" + std::string(kAppVer) +
                       "; versioncode=" + kVersionCode + "; deviceId=" + device_id_ +
-                      "; mobilename=Nintendo%20Switch; resolution=1920x1080; channel=switch; "
-                      "packageType=official";
+                      "; osver=9; mobilename=Nintendo%20Switch; resolution=1920x1080; "
+                      "channel=switch; packageType=official; sn=";
     if (!music_u_.empty()) out += "; MUSIC_U=" + music_u_;
     return out;
 }
@@ -102,10 +114,12 @@ std::string NetEaseApi::headerJson() const {
         {"appver", kAppVer},
         {"versioncode", kVersionCode},
         {"deviceId", device_id_},
+        {"osver", "9"},
         {"mobilename", "Nintendo Switch"},
         {"resolution", "1920x1080"},
         {"channel", "switch"},
         {"packageType", "official"},
+        {"sn", ""},
         {"requestId", std::to_string((long long)clockSeconds() * 1000) + "_1"},
     };
     if (!music_u_.empty()) header["MUSIC_U"] = music_u_;

@@ -55,6 +55,8 @@ private:
     void loadRecommend();
     void ensureTabLoaded();
     void ensureLikedIds();
+    void requestLogout();
+    void logout();
     void toggleSidebar();
     int sidebarWidth() const;
     int contentX() const;
@@ -156,6 +158,8 @@ private:
     PlayMode play_mode_ = PlayMode::Sequential;
     bool sidebar_collapsed_ = false;
     bool sidebar_focus_ = false;
+    bool confirm_logout_ = false;
+    double logout_confirm_until_ = 0;
     bool show_lyrics_ = false;
     uint64_t lyrics_song_ = 0;
     std::vector<LyricLine> lyrics_;

@@ -1,0 +1,18 @@
+[net] socketInitializeDefault=0x0
+[app] starting netease-switch
+[app] input: libnx pad + touch
+[ui] shared font loaded, 7848200 bytes
+[net] connection type=1 strength=3 status=4
+[login] qr created
+[login] poll code=801
+[login] poll code=801
+[login] poll code=801
+[login] poll code=801
+[login] poll code=801
+[login] poll code=802
+[login] poll code=802
+[login] poll code=802
+[login] poll code=803
+[login] authorized, MUSIC_U len=706
+[login] account ok=1 uid=447835009 nick=P4rfa1t
+[toast] 登录成功
