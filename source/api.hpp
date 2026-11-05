@@ -14,6 +14,7 @@ struct Song {
     std::string name;
     std::string artist;
     std::string album;
+    std::string cover_url;
     int duration_ms = 0;
 };
 
@@ -47,7 +48,7 @@ public:
     bool userPlaylists(uint64_t uid, std::vector<Playlist> &out);
     bool toplists(std::vector<Playlist> &out);
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
-    bool songUrl(uint64_t id, std::string &url, std::string &error);
+    bool songUrl(uint64_t id, int br, std::string &url, std::string &error);
     bool lyric(uint64_t id, std::string &lrc);
     bool likeSong(uint64_t id, bool like);
     bool search(const std::string &keyword, std::vector<Song> &out);

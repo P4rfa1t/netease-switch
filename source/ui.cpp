@@ -1,5 +1,7 @@
 #include "ui.hpp"
 
+#include <SDL2/SDL_image.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -23,6 +25,7 @@ static SDL_Color toColor(uint32_t c) {
 
 bool Ui::init(SDL_Renderer *renderer) {
     renderer_ = renderer;
+    IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
     if (TTF_Init() != 0) {
         logf("[ui] TTF_Init failed: %s", TTF_GetError());
         return false;
@@ -42,6 +45,9 @@ bool Ui::init(SDL_Renderer *renderer) {
 void Ui::shutdown() {
     for (auto &kv : cache_) SDL_DestroyTexture(kv.second);
     cache_.clear();
+    for (auto &kv : images_) SDL_DestroyTexture(kv.second);
+    images_.clear();
+    IMG_Quit();
     for (auto &kv : fonts_) TTF_CloseFont(kv.second);
     fonts_.clear();
     TTF_Quit();
@@ -167,6 +173,38 @@ void Ui::textWrapped(int x, int y, int width, const std::string &value, int size
     }
 
     if (!line.empty()) text(x, cursor_y, line, size, color);
+}
+
+SDL_Texture *Ui::cachedImage(const std::string &key) {
+    auto it = images_.find(key);
+    return it == images_.end() ? nullptr : it->second;
+}
+
+SDL_Texture *Ui::textureFromMemory(const std::string &key,
+                                   const std::vector<unsigned char> &data) {
+    SDL_RWops *rw = SDL_RWFromConstMem(data.data(), (int)data.size());
+    if (!rw) return nullptr;
+    SDL_Surface *surface = IMG_Load_RW(rw, 1);
+    if (!surface) {
+        logf("[ui] image decode failed: %s", IMG_GetError());
+        return nullptr;
+    }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_FreeSurface(surface);
+    if (!tex) return nullptr;
+
+    if (images_.size() > 30) {
+        for (auto &kv : images_) SDL_DestroyTexture(kv.second);
+        images_.clear();
+    }
+    images_[key] = tex;
+    return tex;
+}
+
+void Ui::image(SDL_Texture *texture, int x, int y, int w, int h) {
+    if (!texture) return;
+    SDL_Rect dst{x, y, w, h};
+    SDL_RenderCopy(renderer_, texture, nullptr, &dst);
 }
 
 } // namespace ntv

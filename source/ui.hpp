@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
@@ -28,6 +29,11 @@ public:
                      int line_height);
     int textWidth(const std::string &value, int size);
 
+    SDL_Texture *cachedImage(const std::string &key);
+    SDL_Texture *textureFromMemory(const std::string &key,
+                                   const std::vector<unsigned char> &data);
+    void image(SDL_Texture *texture, int x, int y, int w, int h);
+
 private:
     TTF_Font *font(int size);
     SDL_Texture *texture(const std::string &value, int size, uint32_t color);
@@ -37,6 +43,7 @@ private:
     bool has_font_ = false;
     std::map<int, TTF_Font *> fonts_;
     std::map<std::string, SDL_Texture *> cache_;
+    std::map<std::string, SDL_Texture *> images_;
 };
 
 } // namespace ntv

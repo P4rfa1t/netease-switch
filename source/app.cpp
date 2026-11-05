@@ -29,6 +29,9 @@ const uint32_t kSub = rgba(146, 146, 158);
 const uint32_t kRowSelected = rgba(236, 65, 65, 46);
 const uint32_t kWhite = rgba(255, 255, 255);
 
+const int kBrValues[] = {128000, 192000, 320000, 999000};
+const char *kBrNames[] = {"128K", "192K", "320K", "无损"};
+
 constexpr int kSidebarWidth = 300;
 constexpr int kNowBarY = 632;
 constexpr int kRowHeight = 56;
@@ -115,6 +118,15 @@ bool App::init() {
 
     http_.loadCookies("sdmc:/switch/netease-switch/cookies.json");
     http_.loadCookieText("sdmc:/switch/netease-switch/cookie.txt");
+
+    FILE *quality_file = fopen("sdmc:/switch/netease-switch/quality.txt", "r");
+    if (quality_file) {
+        int value = 0;
+        if (fscanf(quality_file, "%d", &value) == 1 && value >= 0 && value < 4) {
+            quality_index_ = value;
+        }
+        fclose(quality_file);
+    }
     if (api_.loggedIn() && loadAccount()) {
         loadHome();
     } else {
@@ -310,6 +322,31 @@ void App::toggleLikeCurrent() {
     toast(target ? "已加入我喜欢的音乐" : "已取消喜欢");
 }
 
+void App::loadCover(const Song &song) {
+    cover_ = nullptr;
+    cover_key_ = song.cover_url;
+    if (cover_key_.empty()) return;
+
+    if (SDL_Texture *cached = ui_.cachedImage(cover_key_)) {
+        cover_ = cached;
+        return;
+    }
+
+    std::vector<unsigned char> bytes;
+    if (!http_.download(cover_key_, bytes)) return;
+    cover_ = ui_.textureFromMemory(cover_key_, bytes);
+}
+
+void App::cycleQuality() {
+    quality_index_ = (quality_index_ + 1) % 4;
+    FILE *f = fopen("sdmc:/switch/netease-switch/quality.txt", "w");
+    if (f) {
+        fprintf(f, "%d\n", quality_index_);
+        fclose(f);
+    }
+    toast(std::string("音质：") + kBrNames[quality_index_]);
+}
+
 void App::ensureTabLoaded() {
     if (tab_ == 3 && recent_.empty()) loadRecent();
     else if (tab_ == 4 && toplists_.empty()) loadToplists();
@@ -421,7 +458,7 @@ void App::playSong(const Song &song) {
 
     std::string url;
     std::string error;
-    if (!api_.songUrl(song.id, url, error)) {
+    if (!api_.songUrl(song.id, kBrValues[quality_index_], url, error)) {
         toast(error);
         auto_next_at_ = clockSeconds() + 60.0;
         return;
@@ -429,6 +466,7 @@ void App::playSong(const Song &song) {
 
     player_.play(url, song.name, song.artist);
     current_song_id_ = song.id;
+    loadCover(song);
     loadLyrics(song.id);
     show_lyrics_ = false;
     last_player_error_.clear();
@@ -604,12 +642,14 @@ void App::handleTap(float x, float y) {
     if (y >= kNowBarY) {
         if (x >= 24 && x <= 112 && y >= 640) {
             player_.togglePause();
-        } else if (x >= 420 && x <= 980 && y >= 660 && y <= 700) {
+        } else if (x >= 420 && x <= 940 && y >= 660 && y <= 700) {
             double total = player_.duration();
-            if (total > 0) player_.seek(((x - 420.0) / 560.0) * total);
-        } else if (x >= 1000 && x <= 1076 && y >= 640) {
+            if (total > 0) player_.seek(((x - 420.0) / 520.0) * total);
+        } else if (x >= 956 && x <= 1026 && y >= 640) {
             toggleLikeCurrent();
-        } else if (x >= 1100 && y >= 640) {
+        } else if (x >= 1032 && x <= 1102 && y >= 640) {
+            cycleQuality();
+        } else if (x >= 1108 && y >= 640) {
             if (lyrics_.empty()) toast("当前歌曲暂无歌词");
             else show_lyrics_ = true;
         } else if (x >= 120 && x <= 420) {
@@ -752,6 +792,7 @@ void App::pollInput() {
     if (pressedRepeat(HidNpadButton_ZL, repeat_vol_down_next_)) player_.adjustVolume(-0.05f);
     if (pressedRepeat(HidNpadButton_ZR, repeat_vol_up_next_)) player_.adjustVolume(0.05f);
     if (pressed(HidNpadButton_StickR)) toggleLikeCurrent();
+    if (pressed(HidNpadButton_StickL)) cycleQuality();
     if (pressed(HidNpadButton_Minus)) {
         play_mode_ = play_mode_ == PlayMode::Sequential ? PlayMode::RepeatOne
                      : play_mode_ == PlayMode::RepeatOne ? PlayMode::Shuffle
@@ -889,7 +930,7 @@ void App::drawSidebar() {
     ui_.text(32, 500, "A 确认   B 返回", 15, kSub);
     ui_.text(32, 524, "X 暂停   Y 歌词", 15, kSub);
     ui_.text(32, 548, "L/R 切歌  ZL/ZR 音量", 15, kSub);
-    ui_.text(32, 572, "R3 红心  - 播放模式", 15, kSub);
+    ui_.text(32, 572, "R3 红心  L3 音质  - 模式", 15, kSub);
 }
 
 void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
@@ -1053,8 +1094,10 @@ void App::drawNowBar() {
     ui_.rect(24, 644, 88, 52, paused || loading ? rgba(60, 60, 68) : kAccent);
     ui_.textCentered(68, 658, paused ? "播放" : "暂停", 19, kText);
 
-    ui_.text(128, kNowBarY + 12, utf8Truncate(player_.title(), 24), 20, kText);
-    ui_.text(128, kNowBarY + 42, utf8Truncate(player_.artist(), 28), 15, kSub);
+    if (cover_) ui_.image(cover_, 128, 648, 52, 52);
+    int text_x = cover_ ? 192 : 128;
+    ui_.text(text_x, kNowBarY + 12, utf8Truncate(player_.title(), cover_ ? 18 : 24), 20, kText);
+    ui_.text(text_x, kNowBarY + 42, utf8Truncate(player_.artist(), cover_ ? 22 : 28), 15, kSub);
 
     const char *state_text = "";
     switch (player_.state()) {
@@ -1068,7 +1111,7 @@ void App::drawNowBar() {
     const char *mode_text = play_mode_ == PlayMode::RepeatOne ? "单曲循环"
                             : play_mode_ == PlayMode::Shuffle   ? "随机播放"
                                                                 : "顺序播放";
-    ui_.text(128, kNowBarY + 62, std::string(state_text) + " · " + mode_text, 14, kSub);
+    ui_.text(text_x, kNowBarY + 62, std::string(state_text) + " · " + mode_text, 14, kSub);
 
     double position = player_.position();
     double duration = player_.duration();
@@ -1076,7 +1119,7 @@ void App::drawNowBar() {
     ratio = std::clamp(ratio, 0.0, 1.0);
 
     int bar_x = 420;
-    int bar_w = 560;
+    int bar_w = 520;
     int bar_y = kNowBarY + 40;
     ui_.rect(bar_x, bar_y, bar_w, 6, rgba(60, 60, 68));
     ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 6, kAccent);
@@ -1085,12 +1128,15 @@ void App::drawNowBar() {
     ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 14, kSub);
 
     bool liked = current_song_id_ != 0 && liked_ids_.count(current_song_id_) != 0;
-    ui_.rect(1000, 644, 76, 52, liked ? kAccent : rgba(52, 52, 62));
-    ui_.textCentered(1038, 658, liked ? "已喜欢" : "喜欢", 15, kText);
+    ui_.rect(956, 644, 70, 52, liked ? kAccent : rgba(52, 52, 62));
+    ui_.textCentered(991, 658, liked ? "已喜欢" : "喜欢", 14, kText);
 
-    ui_.rect(1100, 644, 140, 52, rgba(52, 52, 62));
-    ui_.textCentered(1170, 658, "歌词", 19, kText);
-    ui_.textCentered(1170, 682, "Y", 12, kSub);
+    ui_.rect(1032, 644, 70, 52, rgba(52, 52, 62));
+    ui_.textCentered(1067, 660, kBrNames[quality_index_], 16, kText);
+
+    ui_.rect(1108, 644, 132, 52, rgba(52, 52, 62));
+    ui_.textCentered(1174, 658, "歌词", 19, kText);
+    ui_.textCentered(1174, 682, "Y", 12, kSub);
 }
 
 void App::drawLyrics() {
@@ -1111,6 +1157,11 @@ void App::drawLyrics() {
 
     int cx = kSidebarWidth + 40;
     int width = 1280 - kSidebarWidth - 120;
+    if (cover_) {
+        ui_.image(cover_, 360, 150, 300, 300);
+        cx = 700;
+        width = 540;
+    }
     int center_y = 320;
     int line_height = 44;
 

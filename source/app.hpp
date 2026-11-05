@@ -54,6 +54,8 @@ private:
     void loadToplists();
     void ensureTabLoaded();
     void ensureLikedIds();
+    void loadCover(const Song &song);
+    void cycleQuality();
     void toggleLikeCurrent();
     void openSelected();
     void openPlaylist(uint64_t id, const std::string &name);
@@ -124,6 +126,9 @@ private:
     std::set<uint64_t> liked_ids_;
     bool liked_ids_loaded_ = false;
     uint64_t current_song_id_ = 0;
+    SDL_Texture *cover_ = nullptr;
+    std::string cover_key_;
+    int quality_index_ = 2;
     int daily_sel_ = 0;
     int daily_scroll_ = 0;
     int playlist_sel_ = 0;

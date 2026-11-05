@@ -27,6 +27,12 @@ std::string joinArtists(const nlohmann::json &song) {
     return out;
 }
 
+std::string coverUrl(const nlohmann::json &song) {
+    if (song.contains("al") && song["al"].is_object()) return song["al"].value("picUrl", "");
+    if (song.contains("album") && song["album"].is_object()) return song["album"].value("picUrl", "");
+    return "";
+}
+
 std::string albumName(const nlohmann::json &song) {
     if (song.contains("al") && song["al"].is_object()) return song["al"].value("name", "");
     if (song.contains("album") && song["album"].is_object()) return song["album"].value("name", "");
@@ -72,6 +78,7 @@ Song NetEaseApi::parseSong(const nlohmann::json &j) {
     s.name = j.value("name", "");
     s.artist = joinArtists(j);
     s.album = albumName(j);
+    s.cover_url = coverUrl(j);
     s.duration_ms = j.value("dt", 0);
     return s;
 }
@@ -194,10 +201,10 @@ bool NetEaseApi::playlistDetail(uint64_t id, std::vector<Song> &out, std::string
     return !out.empty();
 }
 
-bool NetEaseApi::songUrl(uint64_t id, std::string &url, std::string &error) {
+bool NetEaseApi::songUrl(uint64_t id, int br, std::string &url, std::string &error) {
     std::string ids = "[" + std::to_string(id) + "]";
     auto j = post("/weapi/song/enhance/player/url",
-                  {{"ids", ids}, {"br", 320000}, {"csrf_token", csrf()}});
+                  {{"ids", ids}, {"br", br}, {"csrf_token", csrf()}});
     if (j.contains("data") && j["data"].is_array() && !j["data"].empty()) {
         url = j["data"][0].value("url", "");
         if (!url.empty()) return true;
