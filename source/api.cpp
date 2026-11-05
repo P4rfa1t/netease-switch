@@ -545,6 +545,34 @@ bool NetEaseApi::playlistSquare(std::vector<Playlist> &out) {
     return !out.empty();
 }
 
+namespace {
+
+HomeCard parseHomeCard(const nlohmann::json &item) {
+    HomeCard c;
+    c.showType = jsonStr(item, "showType");
+    c.resourceType = jsonStr(item, "resourceType");
+    c.title = jsonStr(item, "title");
+    c.subtitle = jsonStr(item, "subTitle");
+
+    std::string rid = jsonStr(item, "resourceId");
+    if (!rid.empty()) c.id = strtoull(rid.c_str(), nullptr, 10);
+
+    auto img = item.find("imageInfo");
+    if (img != item.end() && img->is_object()) {
+        c.cover = jsonStr(*img, "url");
+        if (c.cover == " ") c.cover.clear();
+        if (c.cover.empty()) c.cover = jsonStr(*img, "onImageIconUrl");
+        if (c.subtitle.empty()) c.subtitle = jsonStr(*img, "onImageText");
+    }
+    auto inter = item.find("interactive");
+    if (inter != item.end() && inter->is_object()) {
+        c.target = jsonStr(*inter, "target");
+    }
+    return c;
+}
+
+} // namespace
+
 bool NetEaseApi::homeBlocks(std::vector<HomeBlock> &out) {
     auto j = call("music/multi/terminal/tv/homepage/get", nlohmann::json(),
                   {{"cursor", "0"},
@@ -560,23 +588,23 @@ bool NetEaseApi::homeBlocks(std::vector<HomeBlock> &out) {
 
         HomeBlock b;
         b.showType = jsonStr(item, "showType");
-        b.resourceType = jsonStr(item, "resourceType");
         b.title = jsonStr(item, "title");
-        b.subtitle = jsonStr(item, "subTitle");
-        b.track_count = (int)jsonInt(item, "playCount");
 
-        std::string rid = jsonStr(item, "resourceId");
-        if (!rid.empty()) b.id = strtoull(rid.c_str(), nullptr, 10);
-
-        auto img_it = item.find("imageInfo");
-        if (img_it != item.end() && img_it->is_object()) {
-            const auto &img = *img_it;
-            b.cover = jsonStr(img, "url");
-            if (b.cover.empty()) b.cover = jsonStr(img, "onImageIconUrl");
-            if (b.subtitle.empty()) b.subtitle = jsonStr(img, "onImageText");
+        auto subs = item.find("subscribeList");
+        if (subs != item.end() && subs->is_array()) {
+            for (const auto &sub : *subs) {
+                if (!sub.is_object()) continue;
+                HomeCard c = parseHomeCard(sub);
+                if (c.title.empty()) continue;
+                b.cards.push_back(c);
+            }
+        } else {
+            // Blocks without sub-cards still carry their own image/title.
+            HomeCard c = parseHomeCard(item);
+            if (!c.title.empty()) b.cards.push_back(c);
         }
 
-        if (b.title.empty()) continue;
+        if (b.cards.empty()) continue;
         out.push_back(b);
     }
     return !out.empty();

@@ -94,6 +94,7 @@ private:
     void drawPlaylistGrid(const std::vector<Playlist> &cards, int selected, int scroll,
                           int top, const char *empty_hint);
     void drawPlayerPage();
+    void drawToplistPage();
     void drawCover(const std::string &url, int x, int y, int w, int h);
     SDL_Texture *iconTexture(const char *name);
     void drawIcon(const char *name, int x, int y, int w, int h);

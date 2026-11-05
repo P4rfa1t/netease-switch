@@ -317,7 +317,9 @@ void App::loadHome() {
     logf("[home] discover=%d", (int)discover_playlists_.size());
     api_.homeBlocks(home_blocks_);
     logf("[home] blocks=%d", (int)home_blocks_.size());
-    for (const auto &b : home_blocks_) requestCover(b.cover);
+    for (const auto &b : home_blocks_) {
+        for (const auto &c : b.cards) requestCover(c.cover);
+    }
 
     // Prefetch so the "我的" tiles and the player pill already have artwork.
     logf("[home] prefetch recent/toplists");
@@ -953,6 +955,23 @@ void App::handleTap(float x, float y) {
         return;
     }
 
+    if (show_toplists_) {
+        if (y >= 172) {
+            const int cols = 5, cw = 220, gap = 20;
+            int c = (int)((x - 56) / (cw + gap));
+            int r = (y >= 448) ? 1 : 0;
+            if (c >= 0 && c < cols) {
+                int index = (top_scroll_ + r) * cols + c;
+                if (index >= 0 && index < (int)toplists_.size()) {
+                    top_sel_ = index;
+                    openPlaylist(toplists_[index].id, toplists_[index].name);
+                    show_toplists_ = false;
+                }
+            }
+        }
+        return;
+    }
+
     if (show_playlist_grid_) {
         // section tabs
         if (y >= 108 && y <= 166) {
@@ -1122,6 +1141,26 @@ void App::pollInput() {
         return;
     }
 
+    if (show_toplists_) {
+        const int cols = 5;
+        int total = (int)toplists_.size();
+        if (pressed(HidNpadButton_Left) && top_sel_ % cols > 0) --top_sel_;
+        if (pressed(HidNpadButton_Right) && top_sel_ % cols < cols - 1 && top_sel_ + 1 < total) ++top_sel_;
+        if (pressed(HidNpadButton_Down) && top_sel_ + cols < total) top_sel_ += cols;
+        if (pressed(HidNpadButton_Up)) {
+            if (top_sel_ < cols) { show_toplists_ = false; nav_focused_ = false; }
+            else top_sel_ -= cols;
+        }
+        top_scroll_ = std::clamp(top_scroll_, std::max(0, top_sel_ / cols - 1), top_sel_ / cols);
+
+        if (pressed(HidNpadButton_A) && top_sel_ < total) {
+            openPlaylist(toplists_[top_sel_].id, toplists_[top_sel_].name);
+            show_toplists_ = false;
+        }
+        if (pressed(HidNpadButton_B)) { show_toplists_ = false; screen_ = Screen::Home; }
+        return;
+    }
+
     if (show_playlist_grid_) {
         int total = (int)mineSectionPlaylists().size();
         const int cols = 6;
@@ -1235,7 +1274,8 @@ void App::draw() {
         drawLogin();
         break;
     case Screen::Home:
-        if (show_playlist_grid_) drawMineGrid();
+        if (show_toplists_) drawToplistPage();
+        else if (show_playlist_grid_) drawMineGrid();
         else drawHome();
         break;
     case Screen::Playlist:
@@ -1527,6 +1567,48 @@ void App::drawPlaylistGrid(const std::vector<Playlist> &cards, int selected, int
     }
 }
 
+void App::drawToplistPage() {
+    ui_.rect(0, 0, 1280, 720, kBg);
+    drawTopBar();
+
+    ui_.text(56, 118, "排行榜", 34, kText);
+
+    if (toplists_.empty()) {
+        ui_.textCentered(640, 360, "暂无榜单", 20, kHint);
+        return;
+    }
+
+    // 5 columns of 220x220 cards; wrap to a second row.
+    const int cols = 5, cw = 220, ch = 220, gap = 20;
+    const int total = (int)toplists_.size();
+    const int rows_visible = 2;
+    int first_row = std::clamp(top_scroll_, 0,
+                               std::max(0, (total + cols - 1) / cols - rows_visible));
+
+    for (int r = 0; r < rows_visible; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            int index = (first_row + r) * cols + c;
+            if (index >= total) break;
+
+            int x = 56 + c * (cw + gap);
+            int y = 172 + r * (ch + 56);
+            const Playlist &pl = toplists_[index];
+
+            drawCover(pl.cover_url, x, y, cw, ch);
+            ui_.rect(x, y + ch - 52, cw, 52, rgba(0, 0, 0, 150));
+            ui_.text(x + 12, y + ch - 42, utf8Truncate(pl.name, 12), 17, kText);
+            if (!pl.creator.empty()) {
+                ui_.text(x + 12, y + ch - 22, utf8Truncate(pl.creator, 14), 12, kSub);
+            }
+
+            if (index == top_sel_) {
+                ui_.rectOutline(x - 4, y - 4, cw + 8, ch + 8, kAccent, 3);
+            }
+            requestCover(pl.cover_url);
+        }
+    }
+}
+
 void App::drawPlayerPage() {
     ui_.rect(0, 0, 1280, 720, rgba(14, 14, 16));
     drawTopBar();
@@ -1697,65 +1779,79 @@ void App::drawHome() {
     drawTopBar();
 
     if (page_ == Page::Recommend) {
-        ui_.text(56, 118, "夜深了", 34, kText);
+        int y = 112;
 
-        // Cards come from homepage/get; fall back to the fixed four if empty.
-        struct Fallback { const char *title; const char *desc; };
-        const Fallback fb[4] = {
-            {"继续播放", nullptr}, {"歌单推荐", nullptr},
-            {"每日推荐", "符合你口味的新鲜好歌"}, {"私人漫游", "多种听歌模式随心播放"},
-        };
-
-        int y = 186, w = 286, h = 300, gap = 22, x0 = 56;
-        int count = home_blocks_.empty() ? 4 : std::min((int)home_blocks_.size(), 4);
-
-        for (int i = 0; i < count; ++i) {
-            int x = x0 + i * (w + gap);
-
-            std::string art;
-            std::string title;
-            std::string desc;
-            if (home_blocks_.empty()) {
+        if (home_blocks_.empty()) {
+            ui_.text(56, 118, "夜深了", 34, kText);
+            const char *titles[4] = {"继续播放", "歌单推荐", "每日推荐", "私人漫游"};
+            int w = 286, h = 300, gap = 22, x0 = 56;
+            for (int i = 0; i < 4; ++i) {
+                int x = x0 + i * (w + gap);
+                std::string art;
                 if (i == 0) art = cover_key_;
-                else if (i == 2) art = daily_.empty() ? "" : daily_[0].cover_url;
-                title = fb[i].title;
-                if (fb[i].desc) desc = fb[i].desc;
-            } else {
-                const HomeBlock &b = home_blocks_[i];
-                art = b.cover;
-                title = b.title;
-                desc = b.subtitle;
+                else if (i == 2 && !daily_.empty()) art = daily_[0].cover_url;
+                drawCover(art, x, 186, w, h);
+                ui_.rect(x, 186, w, h, rgba(0, 0, 0, 70));
+                ui_.text(x + 20, 206, titles[i], 26, kText);
             }
-
-            drawCover(art, x, y, w, h);
-            ui_.rect(x, y, w, h, rgba(0, 0, 0, 70));
-            ui_.text(x + 20, y + 20, utf8Truncate(title, 10), 26, kText);
-            if (!desc.empty()) {
-                ui_.rect(x, y + h - 56, w, 56, rgba(0, 0, 0, 160));
-                ui_.text(x + 20, y + h - 42, utf8Truncate(desc, 14), 15, kTextDim);
-            }
-            if (card_index_ == i && !nav_focused_) {
-                ui_.rectOutline(x - 4, y - 4, w + 8, h + 8, kAccent, 3);
-            }
+            return;
         }
 
-        ui_.text(56, 552, "你的专属推荐歌单", 28, kText);
-        char hint[64];
-        snprintf(hint, sizeof(hint), "共 %d 个", (int)discover_playlists_.size());
-        ui_.textRight(1180, 560, hint, 15, kHint);
+        for (size_t bi = 0; bi < home_blocks_.size() && y < 700; ++bi) {
+            const HomeBlock &blk = home_blocks_[bi];
 
-        for (int i = 0; i < 6; ++i) {
-            int index = strip_scroll_ + i;
-            if (index >= (int)discover_playlists_.size()) break;
-            const Playlist &p = discover_playlists_[index];
-            int x = 56 + i * 200;
-            drawCover(p.cover_url, x, 600, 180, 180);
-            if (i == 0 && discover_sel_ == index) {
-                ui_.rectOutline(x - 3, 597, 186, 186, kAccent, 3);
+            int card_w = 200, card_h = 200, gap = 20, per_row = 5;
+            if (blk.showType == "BIG_CARD") { card_w = 300; card_h = 300; per_row = 4; }
+            else if (blk.showType == "MUSIC") { card_w = 300; card_h = 110; per_row = 4; }
+            else if (blk.showType == "GREETING") { card_w = 260; card_h = 90; per_row = 4; }
+            else if (blk.showType == "RECENT_PLAYLIST") { card_w = 150; card_h = 150; per_row = 6; }
+            else if (blk.showType == "SONG_LIST_TOPLIST") { card_w = 240; card_h = 160; per_row = 5; }
+
+            if (blk.showType == "GREETING") {
+                if (!blk.cards.empty())
+                    ui_.text(56, y + 6, utf8Truncate(blk.cards[0].title, 12), 40, kText);
+                y += 66;
+            } else if (!blk.title.empty()) {
+                ui_.text(56, y, utf8Truncate(blk.title, 20), 26, kText);
+                y += 40;
             }
-        }
 
-    } else if (page_ == Page::Mine) {
+            int shown = std::min((int)blk.cards.size(), per_row);
+            for (int i = 0; i < shown; ++i) {
+                const HomeCard &card = blk.cards[i];
+                int x = 56 + i * (card_w + gap);
+
+                if (blk.showType == "GREETING") {
+                    ui_.rect(x, y, card_w, card_h, rgba(255, 255, 255, 12));
+                    int tx = x + 18;
+                    if (!card.cover.empty()) { drawCover(card.cover, x + 14, y + 14, 62, 62); tx = x + 88; }
+                    ui_.text(tx, y + 26, utf8Truncate(card.title, 12), 20, kText);
+                    if (!card.subtitle.empty())
+                        ui_.text(tx, y + 56, utf8Truncate(card.subtitle, 12), 13, kSub);
+                } else if (blk.showType == "MUSIC") {
+                    ui_.rect(x, y, card_w, card_h, rgba(255, 255, 255, 12));
+                    drawCover(card.cover, x + 10, y + 10, 90, 90);
+                    ui_.text(x + 112, y + 18, utf8Truncate(card.title, 14), 19, kText);
+                    ui_.text(x + 112, y + 50, utf8Truncate(card.subtitle, 16), 13, kSub);
+                } else {
+                    drawCover(card.cover, x, y, card_w, card_h);
+                    ui_.rect(x, y + card_h - 58, card_w, 58, rgba(0, 0, 0, 150));
+                    ui_.text(x + 14, y + card_h - 46, utf8Truncate(card.title, 13), 17, kText);
+                    if (!card.subtitle.empty())
+                        ui_.text(x + 14, y + card_h - 24, utf8Truncate(card.subtitle, 15), 13, kTextDim);
+                }
+
+                if (bi == 0 && i == 0 && !nav_focused_) {
+                    ui_.rectOutline(x - 4, y - 4, card_w + 8, card_h + 8, kAccent, 3);
+                }
+                requestCover(card.cover);
+            }
+
+            y += card_h + 34;
+        }
+        return;
+    }
+ else if (page_ == Page::Mine) {
         // Profile card: avatar on the left, nickname + UID to its right.
         ui_.rect(56, 118, 1168, 200, rgba(255, 255, 255, 14));
 

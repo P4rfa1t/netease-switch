@@ -28,14 +28,21 @@ struct Playlist {
     std::string cover_url;
 };
 
-struct HomeBlock {
+struct HomeCard {
     std::string showType;
-    std::string resourceType;
+    std::string resourceType;   // playlist / playList / dailySongs / song / album ...
     std::string title;
     std::string subtitle;
     std::string cover;
+    std::string target;         // interactive.target (nmcloudmusictv://...)
     uint64_t id = 0;
     int track_count = 0;
+};
+
+struct HomeBlock {
+    std::string showType;       // GREETING / BIG_CARD / PLAYLIST / MUSIC / ...
+    std::string title;
+    std::vector<HomeCard> cards;
 };
 
 class NetEaseApi {
