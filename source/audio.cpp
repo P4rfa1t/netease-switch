@@ -46,6 +46,8 @@ void Player::play(const std::string &url, const std::string &title, const std::s
         pending_url_ = url;
     }
 
+    // stop() only resets the flag when it actually joined a thread, so clear it
+    // here or the fresh thread sees stop_==true and exits immediately.
     stop_ = false;
     paused_ = false;
     seek_request_ = -1;
@@ -84,6 +86,7 @@ void Player::stop() {
     }
     seek_request_ = -1;
     paused_ = false;
+    stop_ = false;
     if (state_.load() != State::Error) state_ = State::Idle;
 }
 
@@ -216,22 +219,35 @@ void Player::threadMain() {
     }
     if (stop_) return;
 
-    // Sniff the container instead of trusting the requested format: cloud-disk
-    // uploads are often AAC/M4A or FLAC even when we asked for an mp3 stream.
-    char magic[16] = {};
-    memcpy(magic, file.data(), file.size() < sizeof(magic) ? file.size() : sizeof(magic));
-    logf("[audio] %zu bytes, magic=%02X%02X%02X%02X (%c%c%c%c)", file.size(),
-         (unsigned char)magic[0], (unsigned char)magic[1], (unsigned char)magic[2],
-         (unsigned char)magic[3],
-         (magic[0] >= 32 && magic[0] < 127) ? magic[0] : '.',
-         (magic[1] >= 32 && magic[1] < 127) ? magic[1] : '.',
-         (magic[2] >= 32 && magic[2] < 127) ? magic[2] : '.',
-         (magic[3] >= 32 && magic[3] < 127) ? magic[3] : '.');
+    // Sniff the container instead of trusting the requested format. Note that
+    // most streams start with an ID3v2 tag, so the real marker sits after it.
+    size_t probe = 0;
+    bool has_id3 = file.size() > 10 && memcmp(file.data(), "ID3", 3) == 0;
+    if (has_id3) {
+        // ID3v2 size is a 28-bit syncsafe integer at offset 6.
+        size_t tag = ((size_t)(file[6] & 0x7F) << 21) | ((size_t)(file[7] & 0x7F) << 14) |
+                     ((size_t)(file[8] & 0x7F) << 7) | (size_t)(file[9] & 0x7F);
+        probe = 10 + tag;
+        if (probe + 8 > file.size()) probe = 0;
+    }
 
-    bool is_flac = file.size() > 4 && memcmp(file.data(), "fLaC", 4) == 0;
-    bool is_m4a = file.size() > 12 && memcmp(file.data() + 4, "ftyp", 4) == 0;
-    bool looks_html = file.size() > 5 && memcmp(file.data(), "<!DOC", 5) == 0;
-    bool looks_json = !file.empty() && file[0] == '{';
+    const unsigned char *body = file.data() + probe;
+    size_t body_len = file.size() - probe;
+
+    bool is_flac = body_len > 4 && memcmp(body, "fLaC", 4) == 0;
+    bool is_m4a = body_len > 12 && memcmp(body + 4, "ftyp", 4) == 0;
+    bool is_aac = body_len > 2 && body[0] == 0xFF && (body[1] & 0xF6) == 0xF0;
+    bool is_mp3 = body_len > 2 && body[0] == 0xFF && (body[1] & 0xE0) == 0xE0;
+    bool looks_html = body_len > 5 && memcmp(body, "<!DOC", 5) == 0;
+    bool looks_json = body_len > 1 && body[0] == '{';
+
+    char magic[8] = {};
+    for (int i = 0; i < 4 && (size_t)i < body_len; ++i) {
+        magic[i] = (body[i] >= 32 && body[i] < 127) ? (char)body[i] : '.';
+    }
+    logf("[audio] %zu bytes, id3=%d probe=%zu magic=%02X%02X%02X%02X (%s)", file.size(),
+         (int)has_id3, probe, body_len > 0 ? body[0] : 0, body_len > 1 ? body[1] : 0,
+         body_len > 2 ? body[2] : 0, body_len > 3 ? body[3] : 0, magic);
 
     drmp3 mp3{};
     drflac *flac = nullptr;
@@ -257,12 +273,13 @@ void Player::threadMain() {
         channels = flac->channels;
         rate = flac->sampleRate;
         total = flac->totalPCMFrameCount;
-    } else if (is_m4a) {
+    } else if (is_m4a || (is_aac && !is_mp3)) {
         std::lock_guard<std::mutex> lock(mutex_);
         error_ = "该歌曲是 M4A/AAC 格式，当前解码器不支持";
         state_ = State::Error;
         return;
     } else {
+        // ID3-tagged streams are still plain MP3 frames inside.
         if (!drmp3_init_memory(&mp3, file.data(), file.size(), nullptr)) {
             std::lock_guard<std::mutex> lock(mutex_);
             error_ = "MP3 解码失败（格式可能不受支持）";
