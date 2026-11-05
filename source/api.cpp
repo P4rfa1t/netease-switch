@@ -98,11 +98,11 @@ void NetEaseApi::logout() {
 }
 
 std::string NetEaseApi::cookieHeader() const {
-    // mobilename is URL-encoded exactly once (the client uses URLEncoder); a raw
-    // "Nintendo%20Switch" would be encoded twice and show up literally on the phone.
+    // The client URL-encodes the device model, so any space becomes "%20" and
+    // the login screen shows it literally. Use a space-free model name.
     std::string out = "os=android; appver=" + std::string(kAppVer) +
                       "; versioncode=" + kVersionCode + "; deviceId=" + device_id_ +
-                      "; osver=9; mobilename=Nintendo%20Switch; resolution=1920x1080; "
+                      "; osver=9; mobilename=NintendoSwitch; resolution=1920x1080; "
                       "channel=switch; packageType=official; sn=";
     if (!music_u_.empty()) out += "; MUSIC_U=" + music_u_;
     return out;
@@ -115,7 +115,7 @@ std::string NetEaseApi::headerJson() const {
         {"versioncode", kVersionCode},
         {"deviceId", device_id_},
         {"osver", "9"},
-        {"mobilename", "Nintendo Switch"},
+        {"mobilename", "NintendoSwitch"},
         {"resolution", "1920x1080"},
         {"channel", "switch"},
         {"packageType", "official"},
@@ -295,11 +295,35 @@ bool NetEaseApi::recommendPlaylists(std::vector<Playlist> &out) {
 }
 
 bool NetEaseApi::playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name) {
+    // v4 requires a cache_key: Base64(AES-ECB(")(13daqP@ssw0rd~", sorted params)).
+    std::string sid = std::to_string(id);
+    std::string cache_key = crypto::cacheKey({{"id", sid}, {"n", "1000"}, {"s", "8"}});
+
     auto j = call("playlist/v4/detail",
-                  {{"id", std::to_string(id)}, {"n", "1000"}, {"s", "8"}});
-    if (!j.contains("playlist") || !j["playlist"].is_object()) return false;
-    const auto &pl = j["playlist"];
-    name = pl.value("name", "");
+                  {{"id", sid},
+                   {"n", "1000"},
+                   {"s", "8"},
+                   {"cache_key", cache_key}});
+
+    if (j.contains("playlist") && j["playlist"].is_object() &&
+        j["playlist"].contains("tracks") && j["playlist"]["tracks"].is_array() &&
+        !j["playlist"]["tracks"].empty()) {
+        const auto &pl = j["playlist"];
+        name = pl.value("name", "");
+        out.clear();
+        for (const auto &item : pl["tracks"]) out.push_back(parseSong(item));
+        return !out.empty();
+    }
+
+    // If the cache_key is ever rejected or the playlist comes back empty, fall
+    // back to v3, which takes a plain id.
+    logf("[api] v4 playlist %llu unusable, falling back to v3",
+         (unsigned long long)id);
+    auto fallback = call("v3/playlist/detail",
+                         {{"id", sid}, {"n", "1000"}, {"s", "8"}});
+    if (!fallback.contains("playlist") || !fallback["playlist"].is_object()) return false;
+    const auto &pl = fallback["playlist"];
+    if (name.empty()) name = pl.value("name", "");
     out.clear();
     if (pl.contains("tracks") && pl["tracks"].is_array()) {
         for (const auto &item : pl["tracks"]) out.push_back(parseSong(item));

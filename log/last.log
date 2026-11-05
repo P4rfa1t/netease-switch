@@ -2,13 +2,25 @@
 [app] starting netease-switch
 [app] input: libnx pad + touch
 [ui] shared font loaded, 7848200 bytes
-[net] connection type=1 strength=3 status=4
+[net] connection type=1 strength=2 status=4
+[touch] first contact x=46 y=475 fingers=1
+[toast] 再按一次确认退出账号
+[login] logged out, credentials cleared
+[login] qr created
+[toast] 已退出账号
+[login] poll code=801
+[login] poll code=801
+[login] qr created
+[login] poll code=801
+[login] poll code=801
 [login] qr created
 [login] poll code=801
 [login] poll code=801
 [login] poll code=801
-[login] poll code=801
-[login] poll code=801
+[login] poll code=802
+[login] poll code=802
+[login] poll code=802
+[login] poll code=802
 [login] poll code=802
 [login] poll code=802
 [login] poll code=802

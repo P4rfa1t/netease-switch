@@ -1,10 +1,12 @@
 #include "crypto.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include <mbedtls/aes.h>
+#include <mbedtls/base64.h>
 #include <mbedtls/md5.h>
 #include <switch.h>
 
@@ -85,6 +87,31 @@ std::string randomHex(size_t len) {
         out.push_back(digits[c >> 4]);
         out.push_back(digits[c & 0xF]);
     }
+    return out;
+}
+
+std::string cacheKey(const std::vector<std::pair<std::string, std::string>> &params) {
+    std::vector<std::pair<std::string, std::string>> sorted = params;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+
+    std::string text;
+    for (size_t i = 0; i < sorted.size(); ++i) {
+        if (i) text += "&";
+        text += sorted[i].first + "=" + sorted[i].second;
+    }
+
+    std::vector<unsigned char> in(text.begin(), text.end());
+    std::vector<unsigned char> cipher =
+        aesEcb((const unsigned char *)")(13daqP@ssw0rd~", in, true);
+
+    size_t olen = 0;
+    std::string out(((cipher.size() + 2) / 3) * 4 + 1, '\0');
+    if (mbedtls_base64_encode((unsigned char *)out.data(), out.size(), &olen, cipher.data(),
+                              cipher.size()) != 0) {
+        return {};
+    }
+    out.resize(olen);
     return out;
 }
 
