@@ -358,11 +358,21 @@ bool NetEaseApi::songUrl(uint64_t id, int br, std::string &url, std::string &err
     return false;
 }
 
-bool NetEaseApi::lyric(uint64_t id, std::string &lrc) {
+bool NetEaseApi::lyric(uint64_t id, std::string &lrc, std::string &translated) {
     auto j = call("song/lyric",
-                  {{"id", std::to_string(id)}, {"lv", "-1"}, {"kv", "-1"}, {"tv", "-1"}});
-    if (!j.contains("lrc") || !j["lrc"].is_object()) return false;
-    lrc = j["lrc"].value("lyric", "");
+                  {{"id", std::to_string(id)},
+                   {"lv", "-1"},
+                   {"kv", "-1"},
+                   {"tv", "-1"},
+                   {"rv", "-1"}});
+    lrc.clear();
+    translated.clear();
+    if (j.contains("lrc") && j["lrc"].is_object()) {
+        lrc = j["lrc"].value("lyric", "");
+    }
+    if (j.contains("tlyric") && j["tlyric"].is_object()) {
+        translated = j["tlyric"].value("lyric", "");
+    }
     return !lrc.empty();
 }
 

@@ -20,13 +20,18 @@ namespace ntv {
 
 namespace {
 
-const uint32_t kBg = rgba(18, 18, 22);
-const uint32_t kSidebarBg = rgba(24, 24, 30);
-const uint32_t kPanelBg = rgba(30, 30, 38);
-const uint32_t kAccent = rgba(236, 65, 65);
-const uint32_t kText = rgba(236, 236, 242);
-const uint32_t kSub = rgba(146, 146, 158);
-const uint32_t kRowSelected = rgba(236, 65, 65, 46);
+// Palette lifted from the official TV client's values/colors.xml
+// (t_common_tab_*, t_white_*, t_btn_setting_*).
+const uint32_t kBg = rgba(18, 18, 20);
+const uint32_t kSidebarBg = rgba(24, 24, 26);
+const uint32_t kPanelBg = rgba(30, 30, 32);
+const uint32_t kAccent = rgba(255, 58, 58);       // t_common_dialog_btn_primary
+const uint32_t kText = rgba(255, 255, 255);       // t_white_100
+const uint32_t kTextDim = rgba(205, 205, 205);    // t_white_80
+const uint32_t kSub = rgba(153, 153, 153);        // t_white_60
+const uint32_t kHint = rgba(102, 102, 102);       // t_white_40
+const uint32_t kCardBg = rgba(255, 255, 255, 10); // t_common_tab_bg_checked
+const uint32_t kRowSelected = rgba(255, 58, 58, 46);
 const uint32_t kWhite = rgba(255, 255, 255);
 
 const int kBrValues[] = {128000, 192000, 320000, 999000};
@@ -194,7 +199,16 @@ void App::startLogin() {
         return;
     }
     net_error_.clear();
-    qr_url_ = "https://music.163.com/login?codekey=" + qr_key_;
+    // The TV client encodes its identity into the scan-login URL. The phone shows
+    // hdw_model as the device name, so passing it here is what makes the name
+    // appear correctly (cookies alone are ignored by this page).
+    qr_url_ = "https://music.163.com/st/platform/scanlogin?codekey=" + qr_key_ +
+              "&hdw_deviceid=" + api_.deviceId() +
+              "&hdw_device=switch" +
+              "&hdw_brand=official" +
+              "&hdw_model=NintendoSwitch" +
+              "&hdw_ip=" +
+              "&hdw_token=";
     qr_code_ = 801;
     next_qr_poll_ = clockSeconds() + 2.0;
     logf("[login] qr created");
@@ -610,13 +624,10 @@ void App::startSearch() {
     screen_ = Screen::Playlist;
 }
 
-void App::loadLyrics(uint64_t song_id) {
-    lyrics_.clear();
-    lyrics_song_ = song_id;
+namespace {
 
-    std::string lrc;
-    if (!api_.lyric(song_id, lrc)) return;
-
+std::vector<std::pair<double, std::string>> parseLrc(const std::string &lrc) {
+    std::vector<std::pair<double, std::string>> out;
     size_t pos = 0;
     while (pos < lrc.size()) {
         size_t end = lrc.find('\n', pos);
@@ -639,12 +650,8 @@ void App::loadLyrics(uint64_t song_id) {
             char fraction[8] = {};
             if (sscanf(tag.c_str(), "%d:%d%c%7s", &minutes, &seconds, &dot, fraction) == 4 &&
                 dot == '.') {
-                double frac = 0.0;
                 size_t flen = strlen(fraction);
-                if (flen > 0) {
-                    int value = atoi(fraction);
-                    frac = value / std::pow(10.0, (double)flen);
-                }
+                double frac = flen ? atoi(fraction) / std::pow(10.0, (double)flen) : 0.0;
                 offset = minutes * 60.0 + seconds + frac;
                 has_tag = true;
                 cursor = close + 1;
@@ -655,14 +662,42 @@ void App::loadLyrics(uint64_t song_id) {
 
         if (!has_tag) continue;
         std::string text = line.substr(cursor);
-        if (text.empty()) continue;
-        if (text[0] == '{') continue;
-        lyrics_.push_back({offset, text});
+        if (text.empty() || text[0] == '{') continue;
+        out.push_back({offset, text});
+    }
+    return out;
+}
+
+} // namespace
+
+void App::loadLyrics(uint64_t song_id) {
+    lyrics_.clear();
+    lyrics_song_ = song_id;
+
+    std::string lrc;
+    std::string translated;
+    if (!api_.lyric(song_id, lrc, translated)) return;
+
+    auto main_lines = parseLrc(lrc);
+    auto sub_lines = parseLrc(translated);
+
+    for (const auto &line : main_lines) {
+        LyricLine entry;
+        entry.time = line.first;
+        entry.text = line.second;
+        for (const auto &sub : sub_lines) {
+            if (std::fabs(sub.first - line.first) < 0.35 && sub.second != line.second) {
+                entry.translation = sub.second;
+                break;
+            }
+        }
+        lyrics_.push_back(entry);
     }
 
     std::sort(lyrics_.begin(), lyrics_.end(),
               [](const LyricLine &a, const LyricLine &b) { return a.time < b.time; });
-    logf("[lyrics] song=%llu lines=%d", (unsigned long long)song_id, (int)lyrics_.size());
+    logf("[lyrics] song=%llu lines=%d translated=%d", (unsigned long long)song_id,
+         (int)lyrics_.size(), (int)sub_lines.size());
 }
 
 void App::toast(const std::string &message) {
@@ -1064,62 +1099,65 @@ void App::draw() {
 void App::drawSidebar() {
     int w = sidebarWidth();
     ui_.rect(0, 0, w, kNowBarY, kSidebarBg);
+    ui_.rect(w - 1, 0, 1, kNowBarY, rgba(255, 255, 255, 12));
 
     if (!sidebar_collapsed_) {
-        ui_.text(26, 22, "网易云音乐", 25, kAccent);
+        ui_.text(26, 20, "网易云音乐", 24, kAccent);
         if (!nickname_.empty()) {
-            ui_.text(26, 56, utf8Truncate(nickname_, 14), 14, kSub);
+            ui_.text(26, 54, utf8Truncate(nickname_, 14), 13, kSub);
         }
     } else {
-        ui_.rect(24, 18, 40, 40, kAccent);
-        ui_.textCentered(44, 25, "云", 22, kText);
+        ui_.rect(24, 16, 40, 40, kAccent);
+        ui_.textCentered(44, 24, "云", 21, kText);
     }
 
-    // collapse control
-    ui_.text(sidebar_collapsed_ ? w - 34 : w - 40, 24, sidebar_collapsed_ ? ">" : "<", 20, kSub);
+    ui_.text(sidebar_collapsed_ ? w - 34 : w - 40, 22, sidebar_collapsed_ ? ">" : "<", 19, kHint);
 
     const char *icons[] = {"日", "单", "心", "近", "榜", "荐", "搜"};
     const char *labels[] = {"每日推荐", "我的歌单", "我喜欢的", "最近播放",
                             "排行榜", "推荐歌单", "搜索"};
 
     for (int i = 0; i < 7; ++i) {
-        int y = 112 + i * 54;
+        int y = 106 + i * 52;
         bool selected = (tab_ == i);
+
         if (selected) {
-            ui_.rect(8, y, w - 16, 44, kRowSelected);
-            ui_.rect(8, y, 4, 44, kAccent);
+            ui_.rect(8, y, w - 16, 44, rgba(255, 58, 58, 34));
+            ui_.rect(8, y, 3, 44, kAccent);
         }
 
         int badge_x = sidebar_collapsed_ ? (w - 36) / 2 : 18;
-        uint32_t badge_color = selected ? kAccent : rgba(46, 46, 56);
+        uint32_t badge_color = selected ? kAccent : rgba(255, 255, 255, 14);
         ui_.rect(badge_x, y + 6, 32, 32, badge_color);
-        ui_.textCentered(badge_x + 16, y + 11, icons[i], 18, selected ? kText : kSub);
+        ui_.textCentered(badge_x + 16, y + 11, icons[i], 17,
+                         selected ? kText : kSub);
 
         if (!sidebar_collapsed_) {
-            ui_.text(62, y + 9, labels[i], 20, selected ? kText : kSub);
+            ui_.text(62, y + 10, labels[i], 19, selected ? kText : kTextDim);
         }
     }
 
-    // Logout button sits right above the help text.
+    // Logout button above the help text.
     {
         int by = sidebar_collapsed_ ? 552 : 452;
         int bx = sidebar_collapsed_ ? 20 : 18;
         int bw = sidebar_collapsed_ ? 48 : w - 36;
-        ui_.rect(bx, by, bw, 40, confirm_logout_ ? kAccent : rgba(46, 46, 56));
+        ui_.rect(bx, by, bw, 40, confirm_logout_ ? kAccent : kCardBg);
         if (sidebar_collapsed_) {
-            ui_.textCentered(bx + bw / 2, by + 11, "退", 18, kText);
+            ui_.textCentered(bx + bw / 2, by + 11, "退", 17, kTextDim);
         } else {
             ui_.textCentered(bx + bw / 2, by + 11,
-                             confirm_logout_ ? "再按一次确认" : "退出账号", 17, kText);
+                             confirm_logout_ ? "确认退出？" : "退出账号", 16,
+                             confirm_logout_ ? kText : kTextDim);
         }
     }
 
     if (!sidebar_collapsed_) {
-        ui_.text(26, 498, "A 确认   B 返回", 14, kSub);
-        ui_.text(26, 520, "X 暂停   Y 歌词", 14, kSub);
-        ui_.text(26, 542, "L/R 切歌  ZL/ZR 音量", 14, kSub);
-        ui_.text(26, 564, "R3 红心  L3 音质  - 模式", 14, kSub);
-        ui_.text(26, 586, "+ 收起侧栏  - 退出账号", 14, kSub);
+        ui_.text(26, 508, "A 确认   B 返回", 13, kHint);
+        ui_.text(26, 530, "X 暂停   Y 歌词", 13, kHint);
+        ui_.text(26, 552, "L/R 切歌  ZL/ZR 音量", 13, kHint);
+        ui_.text(26, 574, "R3 红心  L3 音质  - 模式", 13, kHint);
+        ui_.text(26, 596, "+ 收起侧栏", 13, kHint);
     }
 
     if (sidebar_focus_) {
@@ -1133,18 +1171,21 @@ void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
 
     if (selected) {
         ui_.rect(x, y, w, 52, kRowSelected);
-        ui_.rect(x, y, 4, 52, kAccent);
+        ui_.rect(x, y, 3, 52, kAccent);
+        ui_.rectOutline(x, y, w, 52, rgba(255, 58, 58, 90), 1);
     }
 
+    // Index column dims when the row is selected so the title stays dominant.
     char number[16];
     snprintf(number, sizeof(number), "%d", index + 1);
-    ui_.text(x + 20, y + 8, number, 16, kSub);
+    ui_.textRight(x + 46, y + 16, number, 15, selected ? kTextDim : kHint);
 
-    int text_width = w - 160;
-    ui_.text(x + 64, y + 4, utf8Truncate(song.name, (size_t)(text_width / 19)), 19, kText);
-    ui_.text(x + 64, y + 28, utf8Truncate(song.artist, (size_t)(text_width / 15)), 15, kSub);
+    int text_width = w - 190;
+    ui_.text(x + 66, y + 5, utf8Truncate(song.name, (size_t)(text_width / 19)), 19,
+             selected ? kText : kTextDim);
+    ui_.text(x + 66, y + 29, utf8Truncate(song.artist, (size_t)(text_width / 14)), 14, kSub);
 
-    ui_.textRight(x + w - 20, y + 14, formatDuration(song.duration_ms), 16, kSub);
+    ui_.textRight(x + w - 22, y + 16, formatDuration(song.duration_ms), 15, kHint);
 }
 
 void App::drawScrollbar(int x, int y, int height, int visible, int total, int first) {
@@ -1311,26 +1352,32 @@ void App::drawPlaylist() {
 
 void App::drawNowBar() {
     ui_.rect(0, kNowBarY, 1280, 720 - kNowBarY, kPanelBg);
-    ui_.rect(0, kNowBarY, 1280, 1, rgba(50, 50, 58));
+    ui_.rect(0, kNowBarY, 1280, 1, rgba(255, 255, 255, 16));
 
     if (player_.state() == Player::State::Idle) {
-        ui_.text(32, kNowBarY + 30, "未在播放", 18, kSub);
+        ui_.text(32, kNowBarY + 34, "未在播放", 17, kHint);
+        ui_.textRight(1248, kNowBarY + 34, "选择一首歌开始", 14, kHint);
         return;
     }
 
     bool paused = player_.state() == Player::State::Paused;
     bool loading = player_.state() == Player::State::Loading;
-    ui_.rect(24, 644, 88, 52, paused || loading ? rgba(60, 60, 68) : kAccent);
-    ui_.textCentered(68, 658, paused ? "播放" : "暂停", 19, kText);
 
-    if (cover_) ui_.image(cover_, 128, 648, 52, 52);
-    int text_x = cover_ ? 192 : 128;
-    ui_.text(text_x, kNowBarY + 12, utf8Truncate(player_.title(), cover_ ? 18 : 24), 20, kText);
-    ui_.text(text_x, kNowBarY + 42, utf8Truncate(player_.artist(), cover_ ? 22 : 28), 15, kSub);
+    ui_.rect(24, 644, 84, 52, (paused || loading) ? kCardBg : kAccent);
+    ui_.textCentered(66, 659, paused ? "播放" : "暂停", 18, kText);
+
+    if (cover_) {
+        ui_.image(cover_, 124, 646, 56, 56);
+        ui_.rectOutline(124, 646, 56, 56, rgba(255, 255, 255, 24), 1);
+    }
+    int text_x = cover_ ? 194 : 124;
+
+    ui_.text(text_x, kNowBarY + 11, utf8Truncate(player_.title(), cover_ ? 17 : 23), 19, kText);
+    ui_.text(text_x, kNowBarY + 40, utf8Truncate(player_.artist(), cover_ ? 21 : 27), 14, kSub);
 
     const char *state_text = "";
     switch (player_.state()) {
-    case Player::State::Loading: state_text = "缓冲中…"; break;
+    case Player::State::Loading: state_text = "缓冲中"; break;
     case Player::State::Playing: state_text = "正在播放"; break;
     case Player::State::Paused: state_text = "已暂停"; break;
     case Player::State::Error: state_text = "播放失败"; break;
@@ -1340,7 +1387,7 @@ void App::drawNowBar() {
     const char *mode_text = play_mode_ == PlayMode::RepeatOne ? "单曲循环"
                             : play_mode_ == PlayMode::Shuffle   ? "随机播放"
                                                                 : "顺序播放";
-    ui_.text(text_x, kNowBarY + 62, std::string(state_text) + " · " + mode_text, 14, kSub);
+    ui_.text(text_x, kNowBarY + 62, std::string(state_text) + " · " + mode_text, 13, kHint);
 
     double position = player_.position();
     double duration = player_.duration();
@@ -1349,23 +1396,26 @@ void App::drawNowBar() {
 
     int bar_x = 420;
     int bar_w = 520;
-    int bar_y = kNowBarY + 40;
-    ui_.rect(bar_x, bar_y, bar_w, 6, rgba(60, 60, 68));
-    ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 6, kAccent);
+    int bar_y = kNowBarY + 36;
+    ui_.rect(bar_x, bar_y, bar_w, 4, rgba(255, 255, 255, 26));
+    ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 4, kAccent);
+    if (duration > 0) {
+        int knob = bar_x + (int)(bar_w * ratio);
+        ui_.rect(knob - 3, bar_y - 2, 6, 8, kText);
+    }
 
-    ui_.text(bar_x, bar_y + 12, formatTime(position), 14, kSub);
-    ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 14, kSub);
+    ui_.text(bar_x, bar_y + 12, formatTime(position), 13, kHint);
+    ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 13, kHint);
 
     bool liked = current_song_id_ != 0 && liked_ids_.count(current_song_id_) != 0;
-    ui_.rect(956, 644, 70, 52, liked ? kAccent : rgba(52, 52, 62));
-    ui_.textCentered(991, 658, liked ? "已喜欢" : "喜欢", 14, kText);
+    ui_.rect(956, 646, 70, 48, liked ? rgba(255, 58, 58, 200) : kCardBg);
+    ui_.textCentered(991, 660, liked ? "已喜欢" : "喜欢", 14, liked ? kText : kTextDim);
 
-    ui_.rect(1032, 644, 70, 52, rgba(52, 52, 62));
-    ui_.textCentered(1067, 660, kBrNames[quality_index_], 16, kText);
+    ui_.rect(1032, 646, 70, 48, kCardBg);
+    ui_.textCentered(1067, 661, kBrNames[quality_index_], 15, kTextDim);
 
-    ui_.rect(1108, 644, 132, 52, rgba(52, 52, 62));
-    ui_.textCentered(1174, 658, "歌词", 19, kText);
-    ui_.textCentered(1174, 682, "Y", 12, kSub);
+    ui_.rect(1108, 646, 132, 48, kCardBg);
+    ui_.textCentered(1174, 659, "歌词", 18, kTextDim);
 }
 
 void App::drawLyrics() {
@@ -1402,6 +1452,13 @@ void App::drawLyrics() {
         uint32_t color = offset == 0 ? kText : rgba(120, 120, 132);
         int size = offset == 0 ? 24 : 18;
         ui_.textWrapped(cx, y, width, lyrics_[index].text, size, color, line_height);
+
+        if (!lyrics_[index].translation.empty()) {
+            uint32_t sub_color = offset == 0 ? rgba(210, 210, 220) : rgba(100, 100, 112);
+            int sub_size = offset == 0 ? 18 : 14;
+            ui_.textWrapped(cx, y + (offset == 0 ? 32 : 26), width,
+                            lyrics_[index].translation, sub_size, sub_color, line_height);
+        }
     }
 }
 

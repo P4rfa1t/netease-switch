@@ -21,6 +21,7 @@ enum class PlayMode { Sequential, RepeatOne, Shuffle };
 struct LyricLine {
     double time = 0;
     std::string text;
+    std::string translation;
 };
 
 class App {
