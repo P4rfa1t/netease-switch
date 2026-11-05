@@ -24,6 +24,7 @@ struct Playlist {
     int track_count = 0;
     int special_type = 0;
     std::string creator;
+    std::string cover_url;
 };
 
 class NetEaseApi {

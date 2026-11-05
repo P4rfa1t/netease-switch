@@ -15,7 +15,8 @@
 
 namespace ntv {
 
-enum class Screen { Login, Home, Playlist };
+enum class Screen { Login, Home, Playlist, Player };
+enum class Page { Recommend, Discover, Mine, Search };
 enum class PlayMode { Sequential, RepeatOne, Shuffle };
 
 struct LyricLine {
@@ -77,12 +78,26 @@ private:
     void drawLogin();
     void drawHome();
     void drawPlaylist();
-    void drawSidebar();
     void drawNowBar();
     void drawLyrics();
     void drawToast();
     void drawTrackRow(const Song &song, int index, int y, bool selected);
     void drawScrollbar(int x, int y, int height, int visible, int total, int first);
+
+    // ---- TV layout ----
+    void drawTopBar();
+    void drawPlaylistGrid(const std::vector<Playlist> &cards, int selected, int scroll,
+                          int top, const char *empty_hint);
+    void drawPlayerPage();
+    void drawCover(const std::string &url, int x, int y, int w, int h);
+    void requestCover(const std::string &url);
+    void pollCovers();
+    void switchPage(Page page);
+    void activateCard();
+    void loadDiscover();
+    int cardColumns() const { return 5; }
+    int cardWidth() const { return 220; }
+    int cardHeight() const { return 220; }
 
     HttpClient http_;
     NetEaseApi api_{http_};
@@ -155,6 +170,21 @@ private:
     int track_scroll_ = 0;
     int playing_index_ = -1;
     std::vector<Song> play_queue_;
+
+    // ---- top tab bar + card grid (TV layout) ----
+    Page page_ = Page::Recommend;
+    int nav_index_ = 0;              // focused top tab
+    int card_index_ = 0;             // focused card in the grid
+    int card_scroll_ = 0;
+    bool nav_focused_ = true;
+    std::set<std::string> pending_covers_;
+    std::vector<Playlist> discover_playlists_;
+    int discover_sel_ = 0;
+    int discover_scroll_ = 0;
+    std::vector<Playlist> mine_playlists_;   // for the "我的歌单" grid
+    int mine_sel_ = 0;
+    int mine_scroll_ = 0;
+    uint64_t viewed_playlist_id_ = 0;
 
     PlayMode play_mode_ = PlayMode::Sequential;
     bool sidebar_collapsed_ = false;

@@ -252,6 +252,7 @@ bool NetEaseApi::userPlaylists(std::vector<Playlist> &out) {
         p.name = item.value("name", "");
         p.track_count = item.value("trackCount", 0);
         p.special_type = item.value("specialType", 0);
+        p.cover_url = item.value("coverImgUrl", "");
         if (item.contains("creator") && item["creator"].is_object()) {
             p.creator = item["creator"].value("nickname", "");
         }
@@ -270,6 +271,7 @@ bool NetEaseApi::toplists(std::vector<Playlist> &out) {
         p.name = item.value("name", "");
         p.track_count = item.value("trackCount", 0);
         p.creator = item.value("updateFrequency", "");
+        p.cover_url = item.value("coverImgUrl", "");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
@@ -289,6 +291,7 @@ bool NetEaseApi::recommendPlaylists(std::vector<Playlist> &out) {
         p.name = item.value("name", "");
         p.track_count = item.value("trackCount", 0);
         p.creator = item.value("copywriter", "");
+        p.cover_url = item.value("picUrl", "");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();
