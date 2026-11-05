@@ -21,6 +21,7 @@ struct Playlist {
     uint64_t id = 0;
     std::string name;
     int track_count = 0;
+    int special_type = 0;
     std::string creator;
 };
 
@@ -44,6 +45,7 @@ public:
     bool dailySongs(std::vector<Song> &out);
     bool recentSongs(uint64_t uid, std::vector<Song> &out);
     bool userPlaylists(uint64_t uid, std::vector<Playlist> &out);
+    bool toplists(std::vector<Playlist> &out);
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
     bool songUrl(uint64_t id, std::string &url, std::string &error);
     bool lyric(uint64_t id, std::string &lrc);

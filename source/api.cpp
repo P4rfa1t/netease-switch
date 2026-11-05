@@ -138,9 +138,29 @@ bool NetEaseApi::userPlaylists(uint64_t uid, std::vector<Playlist> &out) {
         p.id = item.value("id", (uint64_t)0);
         p.name = item.value("name", "");
         p.track_count = item.value("trackCount", 0);
+        p.special_type = item.value("specialType", 0);
         if (item.contains("creator") && item["creator"].is_object()) {
             p.creator = item["creator"].value("nickname", "");
         }
+        if (p.id != 0) out.push_back(p);
+    }
+    return !out.empty();
+}
+
+bool NetEaseApi::toplists(std::vector<Playlist> &out) {
+    auto j = post("/weapi/toplist", {{"csrf_token", csrf()}});
+    const nlohmann::json *items = nullptr;
+    if (j.contains("list") && j["list"].is_array()) items = &j["list"];
+    else if (j.contains("data") && j["data"].is_array()) items = &j["data"];
+    if (!items) return false;
+
+    out.clear();
+    for (const auto &item : *items) {
+        Playlist p;
+        p.id = item.value("id", (uint64_t)0);
+        p.name = item.value("name", "");
+        p.track_count = item.value("trackCount", 0);
+        p.creator = item.value("updateFrequency", "");
         if (p.id != 0) out.push_back(p);
     }
     return !out.empty();

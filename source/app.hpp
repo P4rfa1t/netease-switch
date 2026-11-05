@@ -15,6 +15,7 @@
 namespace ntv {
 
 enum class Screen { Login, Home, Playlist };
+enum class PlayMode { Sequential, RepeatOne, Shuffle };
 
 struct LyricLine {
     double time = 0;
@@ -49,6 +50,8 @@ private:
     void loadHome();
     void refreshHomePage();
     void loadRecent();
+    void loadToplists();
+    void ensureTabLoaded();
     void openSelected();
     void openPlaylist(uint64_t id, const std::string &name);
     void playSelectedFromPlaylist();
@@ -110,6 +113,11 @@ private:
     std::vector<Song> daily_;
     std::vector<Playlist> playlists_;
     std::vector<Song> recent_;
+    std::vector<Playlist> toplists_;
+    uint64_t liked_playlist_id_ = 0;
+    int liked_track_count_ = 0;
+    int top_sel_ = 0;
+    int top_scroll_ = 0;
     int daily_sel_ = 0;
     int daily_scroll_ = 0;
     int playlist_sel_ = 0;
@@ -124,6 +132,7 @@ private:
     int playing_index_ = -1;
     std::vector<Song> play_queue_;
 
+    PlayMode play_mode_ = PlayMode::Sequential;
     bool show_lyrics_ = false;
     uint64_t lyrics_song_ = 0;
     std::vector<LyricLine> lyrics_;
