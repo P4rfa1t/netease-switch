@@ -9,3 +9,9 @@ build/
 *.o
 *.d
 .DS_Store
+
+# console keys, never commit
+prod.keys
+keys.dat
+keys.txt
+*.keys
