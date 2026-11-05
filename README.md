@@ -16,7 +16,7 @@
 ## 安装
 
 1. 一台已运行 Atmosphère 等自制固件的 Switch（能启动 `.nro`）。
-2. 从 Releases 下载 `netease-switch.nro`，放到 `sd:/switch/`。
+2. 自行构建（见下文「构建」），或从 GitHub Actions 的构建产物下载 `netease-switch.nro`，放到 `sd:/switch/`。
 3. 在 hbmenu（相册）里启动。
 4. 首次启动会显示二维码，用手机网易云音乐 App 扫码并在手机上确认。
 
