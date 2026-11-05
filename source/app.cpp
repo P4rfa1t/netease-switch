@@ -114,6 +114,7 @@ bool App::init() {
     waitForNetwork();
 
     http_.loadCookies("sdmc:/switch/netease-switch/cookies.json");
+    http_.loadCookieText("sdmc:/switch/netease-switch/cookie.txt");
     if (api_.loggedIn() && loadAccount()) {
         loadHome();
     } else {

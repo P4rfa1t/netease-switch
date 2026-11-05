@@ -228,6 +228,32 @@ void HttpClient::loadCookies(const std::string &path) {
     }
 }
 
+void HttpClient::loadCookieText(const std::string &path) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return;
+    std::string data;
+    char buf[512];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) data.append(buf, n);
+    fclose(f);
+
+    const char separators[] = {';', 10, 13, 0};
+    size_t start = 0;
+    while (start < data.size()) {
+        size_t end = data.find_first_of(separators, start);
+        if (end == std::string::npos) end = data.size();
+        std::string part = data.substr(start, end - start);
+        start = end + 1;
+
+        while (!part.empty() && (part.front() == ' ' || part.front() == 9)) part.erase(part.begin());
+        while (!part.empty() && (part.back() == ' ' || part.back() == 9)) part.pop_back();
+        size_t eq = part.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        cookies_[part.substr(0, eq)] = part.substr(eq + 1);
+    }
+    logf("[http] loaded %d cookies from %s", (int)cookies_.size(), path.c_str());
+}
+
 void HttpClient::saveCookies(const std::string &path) const {
     nlohmann::json j = nlohmann::json::object();
     for (const auto &kv : cookies_) j[kv.first] = kv.second;

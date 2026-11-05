@@ -33,6 +33,7 @@ public:
     std::string cookieHeader() const;
 
     void loadCookies(const std::string &path);
+    void loadCookieText(const std::string &path);
     void saveCookies(const std::string &path) const;
 
 private:
