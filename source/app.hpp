@@ -77,6 +77,8 @@ private:
 
     void drawLogin();
     void drawHome();
+    void drawMineGrid();
+    std::vector<Playlist> mineSectionPlaylists() const;
     void drawPlaylist();
     void drawNowBar();
     void drawLyrics();
@@ -184,6 +186,9 @@ private:
     int discover_scroll_ = 0;
     std::vector<Playlist> mine_playlists_;   // for the "我的歌单" grid
     int mine_sel_ = 0;
+    int mine_section_ = 0;      // 0 = 创建的歌单, 1 = 收藏的歌单
+    int mine_focus_ = 0;        // 0 = section tabs, 1 = grid
+    bool show_playlist_grid_ = false;
     int mine_scroll_ = 0;
     uint64_t viewed_playlist_id_ = 0;
 

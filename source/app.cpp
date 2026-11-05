@@ -913,6 +913,30 @@ void App::handleTap(float x, float y) {
         return;
     }
 
+    if (show_playlist_grid_) {
+        // section tabs
+        if (y >= 108 && y <= 166) {
+            if (x >= 468 && x <= 620) { mine_section_ = 0; mine_focus_ = 0; mine_sel_ = 0; return; }
+            if (x >= 620 && x <= 800) { mine_section_ = 1; mine_focus_ = 0; mine_sel_ = 0; return; }
+            return;
+        }
+        if (y >= 200) {
+            const int cols = 6, card_w = 180, gap = 22;
+            int c = (int)((x - 56) / (card_w + gap));
+            int r = (int)((y - 200) / 254);
+            if (c >= 0 && c < cols && r >= 0 && r < 2) {
+                int index = (mine_scroll_ + r) * cols + c;
+                std::vector<Playlist> items = mineSectionPlaylists();
+                if (index >= 0 && index < (int)items.size()) {
+                    mine_sel_ = index;
+                    openPlaylist(items[index].id, items[index].name);
+                    show_playlist_grid_ = false;
+                }
+            }
+        }
+        return;
+    }
+
     if (page_ == Page::Mine) {
         // logout button
         if (y >= 250 && y <= 296 && x >= 240 && x <= 390) {
@@ -978,7 +1002,6 @@ void App::pollInput() {
         if (event.type == SDL_QUIT) running_ = false;
     }
 
-    // --- global playback keys ---
     if (pressed(HidNpadButton_X)) player_.togglePause();
     if (pressed(HidNpadButton_L)) playAdjacent(-1);
     if (pressed(HidNpadButton_R)) playAdjacent(1);
@@ -995,25 +1018,14 @@ void App::pollInput() {
                                                   : "顺序播放");
     }
     if (pressed(HidNpadButton_Y)) {
-        if (screen_ == Screen::Player) {
-            screen_ = Screen::Home;
-        } else {
-            screen_ = Screen::Player;
-        }
+        screen_ = (screen_ == Screen::Player) ? Screen::Home : Screen::Player;
     }
 
-    // --- back ---
     if (pressed(HidNpadButton_B)) {
-        if (screen_ == Screen::Playlist) {
-            screen_ = Screen::Home;
-        } else if (screen_ == Screen::Player) {
-            screen_ = Screen::Home;
-        } else if (!nav_focused_) {
-            nav_focused_ = true;
-        } else {
-            nav_index_ = 0;
-            switchPage(Page::Recommend);
-        }
+        if (screen_ == Screen::Playlist) screen_ = Screen::Home;
+        else if (screen_ == Screen::Player) screen_ = Screen::Home;
+        else if (!nav_focused_) nav_focused_ = true;
+        else { nav_index_ = 0; switchPage(Page::Recommend); }
     }
 
     if (screen_ == Screen::Login) {
@@ -1021,27 +1033,92 @@ void App::pollInput() {
         return;
     }
 
+    if (screen_ == Screen::Player) {
+        if (pressed(HidNpadButton_Left)) player_.seek(player_.position() - 10.0);
+        if (pressed(HidNpadButton_Right)) player_.seek(player_.position() + 10.0);
+        if (pressed(HidNpadButton_A)) player_.togglePause();
+        return;
+    }
+
     if (screen_ == Screen::Playlist) {
-        if (!tracks_.empty()) {
-            if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
-                track_sel_ = std::max(0, track_sel_ - 1);
-            }
-            if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
-                track_sel_ = std::min((int)tracks_.size() - 1, track_sel_ + 1);
-            }
-            keepVisible(track_scroll_, track_sel_, kVisibleRows);
+        // 4 rows x 2 columns per page
+        const int rows = 4;
+        int count = (int)tracks_.size();
+        if (count == 0) return;
+
+        int col = track_sel_ / rows;      // which column this index sits in
+        int row = track_sel_ % rows;
+        int per_page = rows * 2;
+        int page = track_sel_ / per_page;
+
+        auto go = [&](int new_row, int new_col, int new_page) {
+            new_page = std::clamp(new_page, 0, (count - 1) / per_page);
+            int local = new_col * rows + new_row;
+            int idx = new_page * per_page + local;
+            if (idx >= 0 && idx < count) track_sel_ = idx;
+            track_scroll_ = track_sel_ / per_page;
+        };
+
+        if (pressedRepeat(HidNpadButton_Up, repeat_up_next_)) {
+            if (row > 0) go(row - 1, col, page);
         }
+        if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
+            if (row < rows - 1) go(row + 1, col, page);
+        }
+        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_)) {
+            if (col == 1) go(row, 0, page);
+            else go(row, 1, page - 1);
+        }
+        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_)) {
+            if (col == 0) go(row, 1, page);
+            else go(row, 0, page + 1);
+        }
+
         if (pressed(HidNpadButton_A)) playSelectedFromPlaylist();
         return;
     }
 
-    if (screen_ == Screen::Player) {
-        if (pressed(HidNpadButton_Left)) player_.seek(player_.position() - 10.0);
-        if (pressed(HidNpadButton_Right)) player_.seek(player_.position() + 10.0);
+    if (show_playlist_grid_) {
+        int total = (int)mineSectionPlaylists().size();
+        const int cols = 6;
+
+        if (mine_focus_ == 0) {
+            if (pressed(HidNpadButton_Left)) mine_section_ = 0;
+            if (pressed(HidNpadButton_Right)) mine_section_ = 1;
+            if (pressed(HidNpadButton_Down)) mine_focus_ = 1;
+            if (pressed(HidNpadButton_A)) mine_focus_ = 1;
+            return;
+        }
+
+        if (pressed(HidNpadButton_Up)) {
+            if (mine_sel_ < cols) mine_focus_ = 0;
+            else mine_sel_ -= cols;
+        }
+        if (pressedRepeat(HidNpadButton_Down, repeat_down_next_)) {
+            if (mine_sel_ + cols < total) mine_sel_ += cols;
+        }
+        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && mine_sel_ > 0) --mine_sel_;
+        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && mine_sel_ < total - 1) ++mine_sel_;
+
+        int rows_visible = 2;
+        int row = mine_sel_ / cols;
+        mine_scroll_ = std::clamp(mine_scroll_, std::max(0, row - rows_visible + 1),
+                                  std::min(row, std::max(0, (total + cols - 1) / cols - rows_visible)));
+
+        if (pressed(HidNpadButton_A)) {
+            std::vector<Playlist> items = mineSectionPlaylists();
+            if (mine_sel_ < (int)items.size()) {
+                openPlaylist(items[mine_sel_].id, items[mine_sel_].name);
+                show_playlist_grid_ = false;
+            }
+        }
+        if (pressed(HidNpadButton_B)) {
+            show_playlist_grid_ = false;
+            screen_ = Screen::Home;
+        }
         return;
     }
 
-    // --- home: top tabs + card grid ---
     if (nav_focused_) {
         if (pressed(HidNpadButton_Left) && nav_index_ > 0) --nav_index_;
         if (pressed(HidNpadButton_Right) && nav_index_ < 1) ++nav_index_;
@@ -1053,20 +1130,16 @@ void App::pollInput() {
         return;
     }
 
-    if (pressed(HidNpadButton_Up) && card_index_ < 4) {
+    if (pressed(HidNpadButton_Up) &&
+        (page_ == Page::Recommend || page_ == Page::Mine) && card_index_ < 4) {
         nav_focused_ = true;
         return;
     }
 
-    if (page_ == Page::Recommend) {
-        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && card_index_ > 0) --card_index_;
-        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && card_index_ < 3) ++card_index_;
-        if (pressed(HidNpadButton_A)) activateCard();
-    } else if (page_ == Page::Mine) {
-        if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && card_index_ > 0) --card_index_;
-        if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && card_index_ < 3) ++card_index_;
-        if (pressed(HidNpadButton_A)) activateCard();
-    }
+    int cols = (page_ == Page::Mine) ? 4 : 4;
+    if (pressedRepeat(HidNpadButton_Left, repeat_up_next_) && card_index_ > 0) --card_index_;
+    if (pressedRepeat(HidNpadButton_Right, repeat_down_next_) && card_index_ < cols - 1) ++card_index_;
+    if (pressed(HidNpadButton_A)) activateCard();
 }
 
 void App::update() {
@@ -1105,7 +1178,8 @@ void App::draw() {
         drawLogin();
         break;
     case Screen::Home:
-        drawHome();
+        if (show_playlist_grid_) drawMineGrid();
+        else drawHome();
         break;
     case Screen::Playlist:
         drawPlaylist();
@@ -1191,15 +1265,20 @@ void App::activateCard() {
             if (liked_playlist_id_ != 0) openPlaylist(liked_playlist_id_, "我喜欢的音乐");
             else toast("未找到我喜欢的音乐");
         } else if (card_index_ == 2) {
-            if (!playlists_.empty()) {
-                tracks_.clear();
-                tracks_title_ = "我的歌单";
-                screen_ = Screen::Home;
-                page_ = Page::Mine;
-                toast("歌单列表在「发现」页");
+            if (playlists_.empty()) {
+                std::vector<Playlist> lists;
+                if (api_.userPlaylists(lists)) playlists_ = lists;
+            }
+            if (playlists_.empty()) {
+                toast("歌单加载失败");
+            } else {
+                show_playlist_grid_ = true;
+                mine_section_ = 0;
+                mine_sel_ = 0;
+                mine_focus_ = 0;
             }
         } else {
-            toast("关注歌手暂未开放");
+            toast("关注歌手需要额外权限，当前会话不可用");
         }
     }
 }
@@ -1301,42 +1380,62 @@ void App::drawPlaylistGrid(const std::vector<Playlist> &cards, int selected, int
 }
 
 void App::drawPlayerPage() {
-    ui_.rect(0, 0, 1280, 720, rgba(16, 16, 18));
+    ui_.rect(0, 0, 1280, 720, rgba(14, 14, 16));
     drawTopBar();
 
-    // Vinyl disc on the left.
-    int cx = 360, cy = 380, r = 250;
-    ui_.rect(cx - r - 18, cy - r - 18, (r + 18) * 2, (r + 18) * 2, rgba(26, 26, 28));
-    drawCover(cover_key_, cx - r + 30, cy - r + 30, (r - 30) * 2, (r - 30) * 2);
+    // --- vinyl disc, left half ---
+    int cx = 340, cy = 400, r = 210;
+    ui_.circle(cx, cy, r + 16, rgba(20, 20, 22));
+    ui_.ring(cx, cy, r + 16, 2, rgba(255, 255, 255, 22));
+    ui_.circle(cx, cy, r, rgba(28, 28, 30));
+    ui_.ring(cx, cy, r, 1, rgba(255, 255, 255, 16));
+    drawCover(cover_key_, cx - 118, cy - 118, 236, 236);
+    ui_.circle(cx, cy, 10, rgba(16, 16, 18));
 
-    // Tonearm.
-    ui_.rect(cx + 120, cy - r - 10, 90, 10, rgba(220, 220, 220));
-    ui_.rect(cx + 205, cy - r - 10, 14, 14, rgba(240, 240, 240));
-    ui_.rect(cx + 205, cy - r + 4, 8, r + 40, rgba(220, 220, 220));
+    // tonearm
+    ui_.rect(cx + 150, cy - r - 30, 8, 120, rgba(210, 210, 210));
+    ui_.circle(cx + 154, cy - r - 34, 10, rgba(235, 235, 235));
+    ui_.rect(cx + 130, cy - r + 86, 66, 7, rgba(210, 210, 210));
 
-    int tx = 720;
-    ui_.text(tx, 300, utf8Truncate(player_.title(), 22), 34, kText);
-    ui_.text(tx, 352, utf8Truncate(player_.artist(), 26), 18, kSub);
-    ui_.text(tx, 392, kBrNames[quality_index_], 15, rgba(255, 255, 255, 150));
+    // --- info, right half ---
+    int tx = 660;
+    ui_.text(tx, 250, utf8Truncate(player_.title(), 20), 40, kText);
+    ui_.text(tx, 310, utf8Truncate(player_.artist(), 24), 20, kSub);
+    ui_.text(tx, 350, kBrNames[quality_index_], 16, rgba(255, 255, 255, 140));
 
+    // --- progress ---
     double pos = player_.position();
     double dur = player_.duration();
     double ratio = dur > 0 ? std::clamp(pos / dur, 0.0, 1.0) : 0.0;
 
-    int bar_x = 120, bar_w = 1040, bar_y = 600;
+    int bar_x = 140, bar_w = 1000, bar_y = 592;
     ui_.rect(bar_x, bar_y, bar_w, 4, rgba(255, 255, 255, 40));
-    ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 4, kText);
-    ui_.text(bar_x, bar_y + 12, formatTime(pos), 14, kSub);
-    ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(dur), 14, kSub);
+    ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 4, kAccent);
+    ui_.circle(bar_x + (int)(bar_w * ratio), bar_y + 2, 6, kText);
+    ui_.text(bar_x, bar_y + 14, formatTime(pos), 15, kSub);
+    ui_.textRight(bar_x + bar_w, bar_y + 14, formatTime(dur), 15, kSub);
 
-    // Controls row.
-    ui_.text(bar_x + 60, 664, player_.state() == Player::State::Paused ? "▶" : "❚❚", 26, kText);
-    ui_.textCentered(640 - 70, 664, "◀◀", 22, kText);
-    ui_.textCentered(640 + 70, 664, "▶▶", 22, kText);
-    ui_.textRight(bar_x + bar_w, 664, play_mode_ == PlayMode::Shuffle ? "随机"
-                                              : play_mode_ == PlayMode::RepeatOne ? "单曲"
-                                                                                  : "顺序",
-                  16, kSub);
+    // --- controls: straight centre row ---
+    int cy2 = 660;
+    ui_.triangle(520, cy2 - 14, 18, 28, "left", kText);
+    ui_.triangle(536, cy2 - 14, 18, 28, "left", kText);
+
+    if (player_.state() == Player::State::Paused || player_.state() == Player::State::Idle) {
+        ui_.triangle(626, cy2 - 20, 26, 40, "right", kText);
+    } else {
+        ui_.pauseBars(626, cy2 - 20, 28, 40, kText);
+    }
+
+    ui_.triangle(706, cy2 - 14, 18, 28, "right", kText);
+    ui_.triangle(722, cy2 - 14, 18, 28, "right", kText);
+
+    // side actions
+    ui_.text(140, cy2 - 10, "喜欢", 17, kSub);
+    ui_.text(230, cy2 - 10, play_mode_ == PlayMode::Shuffle ? "随机"
+                              : play_mode_ == PlayMode::RepeatOne ? "单曲"
+                                                                  : "顺序",
+             17, kSub);
+    ui_.textRight(1140, cy2 - 10, "歌词", 17, kSub);
 }
 
 void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
@@ -1368,6 +1467,70 @@ void App::drawScrollbar(int x, int y, int height, int visible, int total, int fi
     int max_first = std::max(1, total - visible);
     int offset = (height - bar_height) * first / max_first;
     ui_.rect(x, y + offset, 4, bar_height, rgba(90, 90, 100));
+}
+
+std::vector<Playlist> App::mineSectionPlaylists() const {
+    std::vector<Playlist> out;
+    for (const auto &p : playlists_) {
+        if (p.special_type == 5) continue;          // skip "我喜欢的音乐"
+        bool collected = p.creator.empty() || p.creator != nickname_;
+        // subscribed flag is not exposed yet; fall back to creator mismatch
+        (void)collected;
+        out.push_back(p);
+    }
+    return out;
+}
+
+void App::drawMineGrid() {
+    ui_.rect(0, 0, 1280, 720, kBg);
+    drawTopBar();
+
+    // Section tabs: 创建的歌单 / 收藏的歌单
+    const char *tabs[2] = {"创建的歌单", "收藏的歌单"};
+    int tx = 480;
+    for (int i = 0; i < 2; ++i) {
+        bool active = mine_section_ == i;
+        ui_.text(tx, 118, tabs[i], 26, active ? kAccent : kTextDim);
+        if (active) ui_.rect(tx, 158, ui_.textWidth(tabs[i], 26), 3, kAccent);
+        if (mine_focus_ == 0 && mine_section_ == i) {
+            ui_.rectOutline(tx - 12, 108, ui_.textWidth(tabs[i], 26) + 24, 58,
+                            rgba(255, 255, 255, 70), 1);
+        }
+        tx += ui_.textWidth(tabs[i], 26) + 70;
+    }
+
+    std::vector<Playlist> items = mineSectionPlaylists();
+    if (items.empty()) {
+        ui_.textCentered(640, 360, "暂无歌单", 20, kHint);
+        return;
+    }
+
+    const int cols = 6, card_w = 180, card_h = 180, gap = 22;
+    int x0 = 56, y0 = 200;
+    int rows_visible = 2;
+    int first_row = std::clamp(mine_scroll_, 0,
+                               std::max(0, (int)((items.size() + cols - 1) / cols) - rows_visible));
+
+    for (int r = 0; r < rows_visible; ++r) {
+        for (int c = 0; c < cols; ++c) {
+            int index = (first_row + r) * cols + c;
+            if (index >= (int)items.size()) break;
+            int x = x0 + c * (card_w + gap);
+            int y = y0 + r * (card_h + 74);
+            const Playlist &p = items[index];
+
+            drawCover(p.cover_url, x, y, card_w, card_h);
+            ui_.rect(x, y + card_h - 54, card_w, 54, rgba(0, 0, 0, 140));
+            ui_.text(x + 12, y + card_h - 44, utf8Truncate(p.name, 11), 16, kText);
+            char meta[32];
+            snprintf(meta, sizeof(meta), "%d 首", p.track_count);
+            ui_.text(x + 12, y + card_h - 22, meta, 13, kSub);
+
+            if (mine_focus_ == 1 && index == mine_sel_) {
+                ui_.rectOutline(x - 4, y - 4, card_w + 8, card_h + 8, kAccent, 3);
+            }
+        }
+    }
 }
 
 void App::drawHome() {

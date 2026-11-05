@@ -3,6 +3,7 @@
 #include <SDL2/SDL_image.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -110,6 +111,60 @@ void Ui::rectOutline(int x, int y, int w, int h, uint32_t color, int thickness) 
         SDL_Rect r{x + i, y + i, w - i * 2, h - i * 2};
         SDL_RenderDrawRect(renderer_, &r);
     }
+}
+
+void Ui::circle(int cx, int cy, int r, uint32_t color) {
+    SDL_Color c = toColor(color);
+    SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+    for (int dy = -r; dy <= r; ++dy) {
+        int dx = (int)std::sqrt((double)(r * r - dy * dy));
+        SDL_RenderDrawLine(renderer_, cx - dx, cy + dy, cx + dx, cy + dy);
+    }
+}
+
+void Ui::ring(int cx, int cy, int r, int thickness, uint32_t color) {
+    circle(cx, cy, r, color);
+    // Punch the middle out by painting the backing colour is not possible here,
+    // so draw the ring as two arcs of horizontal spans instead.
+    SDL_Color c = toColor(color);
+    SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+    int inner = r - thickness;
+    if (inner <= 0) return;
+    // redraw inner region in transparent-ish way is impossible; caller draws on
+    // a known background, so we approximate with an outline of the inner circle
+    for (int dy = -inner; dy <= inner; ++dy) {
+        int dx = (int)std::sqrt((double)(inner * inner - dy * dy));
+        SDL_RenderDrawPoint(renderer_, cx - dx, cy + dy);
+        SDL_RenderDrawPoint(renderer_, cx + dx, cy + dy);
+    }
+}
+
+void Ui::triangle(int x, int y, int w, int h, const char *dir, uint32_t color) {
+    SDL_Color c = toColor(color);
+    SDL_SetRenderDrawColor(renderer_, c.r, c.g, c.b, c.a);
+    bool right = dir[0] == 'r';
+    bool left = dir[0] == 'l';
+    bool up = dir[0] == 'u';
+
+    if (left || right) {
+        for (int i = 0; i < w; ++i) {
+            int half = (h / 2) * (w - i) / (w > 0 ? w : 1);
+            int cx = right ? x + i : x + w - i;
+            SDL_RenderDrawLine(renderer_, cx, y + h / 2 - half, cx, y + h / 2 + half);
+        }
+    } else {
+        for (int i = 0; i < h; ++i) {
+            int half = (w / 2) * (h - i) / (h > 0 ? h : 1);
+            int cy = up ? y + i : y + h - i;
+            SDL_RenderDrawLine(renderer_, x + w / 2 - half, cy, x + w / 2 + half, cy);
+        }
+    }
+}
+
+void Ui::pauseBars(int x, int y, int w, int h, uint32_t color) {
+    int bar = w / 3;
+    rect(x, y, bar, h, color);
+    rect(x + w - bar, y, bar, h, color);
 }
 
 void Ui::text(int x, int y, const std::string &value, int size, uint32_t color) {

@@ -21,6 +21,12 @@ public:
     void clear(uint32_t color);
     void rect(int x, int y, int w, int h, uint32_t color);
     void rectOutline(int x, int y, int w, int h, uint32_t color, int thickness = 2);
+    void circle(int cx, int cy, int r, uint32_t color);
+    void ring(int cx, int cy, int r, int thickness, uint32_t color);
+    // Filled triangle; dir = "up" | "down" | "left" | "right"
+    void triangle(int x, int y, int w, int h, const char *dir, uint32_t color);
+    // Two vertical bars (pause icon)
+    void pauseBars(int x, int y, int w, int h, uint32_t color);
 
     void text(int x, int y, const std::string &value, int size, uint32_t color);
     void textRight(int right, int y, const std::string &value, int size, uint32_t color);
