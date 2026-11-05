@@ -1,0 +1,750 @@
+#include "app.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+#include <SDL2/SDL.h>
+
+#include "qrcodegen.hpp"
+#include "util.hpp"
+
+namespace ntv {
+
+namespace {
+
+const uint32_t kBg = rgba(18, 18, 22);
+const uint32_t kSidebarBg = rgba(24, 24, 30);
+const uint32_t kPanelBg = rgba(30, 30, 38);
+const uint32_t kAccent = rgba(236, 65, 65);
+const uint32_t kText = rgba(236, 236, 242);
+const uint32_t kSub = rgba(146, 146, 158);
+const uint32_t kRowSelected = rgba(236, 65, 65, 46);
+const uint32_t kWhite = rgba(255, 255, 255);
+
+constexpr int kSidebarWidth = 300;
+constexpr int kNowBarY = 632;
+constexpr int kRowHeight = 56;
+constexpr int kVisibleRows = 9;
+constexpr int kListTop = 88;
+
+double clockSeconds() {
+    return (double)SDL_GetTicks64() / 1000.0;
+}
+
+void keepVisible(int &scroll, int selected, int visible) {
+    if (selected < scroll) scroll = selected;
+    if (visible > 0 && selected >= scroll + visible) scroll = selected - visible + 1;
+    if (scroll < 0) scroll = 0;
+}
+
+} // namespace
+
+int App::run() {
+    if (!init()) return 1;
+
+    while (running_ && appletMainLoop()) {
+        pollInput();
+        update();
+        draw();
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(15);
+    }
+
+    shutdown();
+    return 0;
+}
+
+bool App::init() {
+    romfsInit();
+    plInitialize(PlServiceType_User);
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
+        logf("[app] SDL_Init failed: %s", SDL_GetError());
+        return false;
+    }
+
+    if (SDL_CreateWindowAndRenderer(1280, 720, SDL_WINDOW_SHOWN, &window_, &renderer_) != 0) {
+        logf("[app] window creation failed: %s", SDL_GetError());
+        return false;
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+    logInit();
+    socketInitializeDefault();
+    logf("[app] starting netease-switch");
+
+    player_.init();
+
+    SDL_GameControllerEventState(SDL_ENABLE);
+    int joysticks = SDL_NumJoysticks();
+    for (int i = 0; i < joysticks; ++i) {
+        if (SDL_IsGameController(i)) {
+            controller_ = SDL_GameControllerOpen(i);
+            if (controller_) break;
+        }
+    }
+    logf("[app] controller: %s", controller_ ? SDL_GameControllerName(controller_) : "none");
+
+    if (!ui_.init(renderer_)) return false;
+
+    http_.loadCookies("sdmc:/switch/netease-switch/cookies.json");
+    if (api_.loggedIn() && loadAccount()) {
+        loadHome();
+    } else {
+        startLogin();
+    }
+    return true;
+}
+
+void App::shutdown() {
+    player_.shutdown();
+    if (controller_) SDL_GameControllerClose(controller_);
+    ui_.shutdown();
+    if (renderer_) SDL_DestroyRenderer(renderer_);
+    if (window_) SDL_DestroyWindow(window_);
+    SDL_Quit();
+    socketExit();
+    plExit();
+    romfsExit();
+}
+
+void App::startLogin() {
+    screen_ = Screen::Login;
+    show_lyrics_ = false;
+    lyrics_.clear();
+    qr_key_.clear();
+    qr_url_.clear();
+    qr_code_ = 0;
+
+    if (!api_.qrCreate(qr_key_)) {
+        toast("获取二维码失败，按 A 重试");
+        return;
+    }
+    qr_url_ = "https://music.163.com/login?codekey=" + qr_key_;
+    qr_code_ = 800;
+    next_qr_poll_ = clockSeconds() + 2.0;
+    logf("[login] qr created");
+}
+
+void App::pollLogin() {
+    if (screen_ != Screen::Login || qr_key_.empty()) return;
+    double now = clockSeconds();
+    if (now < next_qr_poll_) return;
+    next_qr_poll_ = now + 2.0;
+
+    int code = api_.qrCheck(qr_key_);
+    qr_code_ = code;
+    logf("[login] poll code=%d", code);
+
+    if (code == 803) {
+        http_.saveCookies("sdmc:/switch/netease-switch/cookies.json");
+        if (loadAccount()) {
+            toast("登录成功");
+            loadHome();
+        } else {
+            toast("登录状态获取失败");
+            startLogin();
+        }
+    } else if (code == 802) {
+        qr_key_.clear();
+    }
+}
+
+bool App::loadAccount() {
+    return api_.account(uid_, nickname_);
+}
+
+void App::loadHome() {
+    screen_ = Screen::Home;
+    tab_ = 0;
+    daily_.clear();
+    playlists_.clear();
+    daily_sel_ = daily_scroll_ = 0;
+    playlist_sel_ = playlist_scroll_ = 0;
+
+    bool ok = api_.dailySongs(daily_);
+    ok = api_.userPlaylists(uid_, playlists_) || ok;
+    if (!ok) toast("加载失败，按 + 重试");
+}
+
+void App::refreshHomePage() {
+    redrawNow();
+    if (tab_ == 0) {
+        std::vector<Song> songs;
+        if (api_.dailySongs(songs)) {
+            daily_ = songs;
+            daily_sel_ = std::min(daily_sel_, (int)daily_.size() - 1);
+            if (daily_sel_ < 0) daily_sel_ = 0;
+            toast("已刷新");
+        } else {
+            toast("刷新失败");
+        }
+    } else if (tab_ == 1) {
+        std::vector<Playlist> lists;
+        if (api_.userPlaylists(uid_, lists)) {
+            playlists_ = lists;
+            playlist_sel_ = std::min(playlist_sel_, (int)playlists_.size() - 1);
+            if (playlist_sel_ < 0) playlist_sel_ = 0;
+            toast("已刷新");
+        } else {
+            toast("刷新失败");
+        }
+    }
+}
+
+void App::openSelected() {
+    if (tab_ == 0) {
+        if (daily_.empty()) return;
+        playing_playlist_ = false;
+        playing_index_ = daily_sel_;
+        playSong(daily_[daily_sel_]);
+    } else if (tab_ == 1) {
+        if (playlists_.empty()) return;
+        const Playlist &p = playlists_[playlist_sel_];
+        openPlaylist(p.id, p.name);
+    } else {
+        startSearch();
+    }
+}
+
+void App::openPlaylist(uint64_t id, const std::string &name) {
+    redrawNow();
+    std::vector<Song> songs;
+    std::string real_name;
+    if (!api_.playlistDetail(id, songs, real_name)) {
+        toast("歌单加载失败");
+        return;
+    }
+    tracks_ = songs;
+    tracks_title_ = real_name.empty() ? name : real_name;
+    track_sel_ = 0;
+    track_scroll_ = 0;
+    playing_index_ = -1;
+    screen_ = Screen::Playlist;
+}
+
+void App::playSelectedFromPlaylist() {
+    if (tracks_.empty()) return;
+    playing_playlist_ = true;
+    playing_index_ = track_sel_;
+    playSong(tracks_[track_sel_]);
+}
+
+void App::playSong(const Song &song) {
+    redrawNow();
+
+    std::string url;
+    std::string error;
+    if (!api_.songUrl(song.id, url, error)) {
+        toast(error);
+        auto_next_at_ = clockSeconds() + 60.0;
+        return;
+    }
+
+    player_.play(url, song.name, song.artist);
+    loadLyrics(song.id);
+    show_lyrics_ = false;
+    last_player_error_.clear();
+    auto_next_at_ = clockSeconds() + 2.0;
+}
+
+void App::playAdjacent(int direction) {
+    const std::vector<Song> &list = playing_playlist_ ? tracks_ : daily_;
+    if (list.empty()) return;
+
+    int count = (int)list.size();
+    if (playing_index_ < 0) playing_index_ = 0;
+    playing_index_ = (playing_index_ + direction + count) % count;
+    playSong(list[playing_index_]);
+}
+
+void App::startSearch() {
+    SwkbdConfig config;
+    if (R_FAILED(swkbdCreate(&config, 0))) return;
+    swkbdConfigMakePresetDefault(&config);
+    swkbdConfigSetGuideText(&config, "搜索歌曲或歌手");
+
+    char input[256] = {};
+    Result rc = swkbdShow(&config, input, sizeof(input));
+    swkbdClose(&config);
+    if (R_FAILED(rc) || input[0] == '\0') return;
+
+    redrawNow();
+    std::vector<Song> results;
+    if (!api_.search(input, results)) {
+        toast("没有找到结果");
+        return;
+    }
+    tracks_ = results;
+    tracks_title_ = std::string("搜索：") + input;
+    track_sel_ = 0;
+    track_scroll_ = 0;
+    playing_playlist_ = true;
+    playing_index_ = -1;
+    screen_ = Screen::Playlist;
+}
+
+void App::loadLyrics(uint64_t song_id) {
+    lyrics_.clear();
+    lyrics_song_ = song_id;
+
+    std::string lrc;
+    if (!api_.lyric(song_id, lrc)) return;
+
+    size_t pos = 0;
+    while (pos < lrc.size()) {
+        size_t end = lrc.find('\n', pos);
+        if (end == std::string::npos) end = lrc.size();
+        std::string line = lrc.substr(pos, end - pos);
+        pos = end + 1;
+
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+
+        double offset = 0.0;
+        size_t cursor = 0;
+        bool has_tag = false;
+        while (cursor < line.size() && line[cursor] == '[') {
+            size_t close = line.find(']', cursor);
+            if (close == std::string::npos) break;
+            std::string tag = line.substr(cursor + 1, close - cursor - 1);
+            int minutes = 0;
+            int seconds = 0;
+            char dot = 0;
+            char fraction[8] = {};
+            if (sscanf(tag.c_str(), "%d:%d%c%7s", &minutes, &seconds, &dot, fraction) == 4 &&
+                dot == '.') {
+                double frac = 0.0;
+                size_t flen = strlen(fraction);
+                if (flen > 0) {
+                    int value = atoi(fraction);
+                    frac = value / std::pow(10.0, (double)flen);
+                }
+                offset = minutes * 60.0 + seconds + frac;
+                has_tag = true;
+                cursor = close + 1;
+            } else {
+                break;
+            }
+        }
+
+        if (!has_tag) continue;
+        std::string text = line.substr(cursor);
+        if (text.empty()) continue;
+        if (text[0] == '{') continue;
+        lyrics_.push_back({offset, text});
+    }
+
+    std::sort(lyrics_.begin(), lyrics_.end(),
+              [](const LyricLine &a, const LyricLine &b) { return a.time < b.time; });
+    logf("[lyrics] song=%llu lines=%d", (unsigned long long)song_id, (int)lyrics_.size());
+}
+
+void App::toast(const std::string &message) {
+    toast_text_ = message;
+    toast_until_ = clockSeconds() + 3.0;
+    logf("[toast] %s", message.c_str());
+}
+
+bool App::pressedRepeat(SDL_GameControllerButton button) {
+    if (!current_[button]) {
+        repeat_next_[button] = 0;
+        return false;
+    }
+    double now = clockSeconds();
+    if (!previous_[button]) {
+        repeat_next_[button] = now + 0.35;
+        return true;
+    }
+    if (now >= repeat_next_[button]) {
+        repeat_next_[button] = now + 0.08;
+        return true;
+    }
+    return false;
+}
+
+void App::pollInput() {
+    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
+        current_[i] = controller_ &&
+                      SDL_GameControllerGetButton(controller_, (SDL_GameControllerButton)i) != 0;
+    }
+
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        if (event.type == SDL_QUIT) running_ = false;
+    }
+
+    if (pressed(SDL_CONTROLLER_BUTTON_B)) {
+        if (show_lyrics_) {
+            show_lyrics_ = false;
+        } else if (screen_ == Screen::Playlist) {
+            screen_ = Screen::Home;
+        }
+    }
+
+    if (pressed(SDL_CONTROLLER_BUTTON_X)) player_.togglePause();
+    if (pressed(SDL_CONTROLLER_BUTTON_Y)) {
+        if (lyrics_.empty()) {
+            toast("当前歌曲暂无歌词");
+        } else {
+            show_lyrics_ = !show_lyrics_;
+        }
+    }
+    if (pressed(SDL_CONTROLLER_BUTTON_LEFTSHOULDER)) playAdjacent(-1);
+    if (pressed(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) playAdjacent(1);
+
+    double now = clockSeconds();
+    if (controller_ && now >= trigger_cooldown_) {
+        int zl = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        int zr = SDL_GameControllerGetAxis(controller_, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+        if (zl > 16000) {
+            player_.adjustVolume(-0.05f);
+            trigger_cooldown_ = now + 0.12;
+        } else if (zr > 16000) {
+            player_.adjustVolume(0.05f);
+            trigger_cooldown_ = now + 0.12;
+        }
+    }
+
+    if (screen_ == Screen::Login) {
+        if (pressed(SDL_CONTROLLER_BUTTON_A) && qr_key_.empty()) startLogin();
+    } else if (screen_ == Screen::Home) {
+        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) tab_ = (tab_ + 2) % 3;
+        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) tab_ = (tab_ + 1) % 3;
+
+        if (tab_ == 0 && !daily_.empty()) {
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+                daily_sel_ = std::max(0, daily_sel_ - 1);
+            }
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+                daily_sel_ = std::min((int)daily_.size() - 1, daily_sel_ + 1);
+            }
+            keepVisible(daily_scroll_, daily_sel_, kVisibleRows);
+        } else if (tab_ == 1 && !playlists_.empty()) {
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+                playlist_sel_ = std::max(0, playlist_sel_ - 1);
+            }
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+                playlist_sel_ = std::min((int)playlists_.size() - 1, playlist_sel_ + 1);
+            }
+            keepVisible(playlist_scroll_, playlist_sel_, kVisibleRows);
+        }
+
+        if (pressed(SDL_CONTROLLER_BUTTON_A)) openSelected();
+        if (pressed(SDL_CONTROLLER_BUTTON_START)) refreshHomePage();
+    } else if (screen_ == Screen::Playlist) {
+        if (!tracks_.empty()) {
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_UP)) {
+                track_sel_ = std::max(0, track_sel_ - 1);
+            }
+            if (pressedRepeat(SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+                track_sel_ = std::min((int)tracks_.size() - 1, track_sel_ + 1);
+            }
+            keepVisible(track_scroll_, track_sel_, kVisibleRows);
+        }
+        if (pressed(SDL_CONTROLLER_BUTTON_A)) playSelectedFromPlaylist();
+        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_LEFT)) player_.seek(player_.position() - 10.0);
+        if (pressed(SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) player_.seek(player_.position() + 10.0);
+    }
+
+    for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) previous_[i] = current_[i];
+}
+
+void App::update() {
+    pollLogin();
+
+    std::string error = player_.error();
+    if (player_.state() == Player::State::Error && !error.empty() && error != last_player_error_) {
+        last_player_error_ = error;
+        toast(error);
+    }
+
+    if (player_.finished()) {
+        double now = clockSeconds();
+        if (now >= auto_next_at_) {
+            auto_next_at_ = now + 2.0;
+            const std::vector<Song> &list = playing_playlist_ ? tracks_ : daily_;
+            if (!list.empty() && playing_index_ >= 0) playAdjacent(1);
+        }
+    }
+}
+
+void App::redrawNow() {
+    draw();
+    SDL_RenderPresent(renderer_);
+}
+
+void App::draw() {
+    ui_.clear(kBg);
+
+    switch (screen_) {
+    case Screen::Login:
+        drawLogin();
+        break;
+    case Screen::Home:
+        drawHome();
+        drawNowBar();
+        break;
+    case Screen::Playlist:
+        drawPlaylist();
+        drawNowBar();
+        break;
+    }
+
+    if (show_lyrics_) drawLyrics();
+    drawToast();
+}
+
+void App::drawSidebar() {
+    ui_.rect(0, 0, kSidebarWidth, kNowBarY, kSidebarBg);
+    ui_.text(32, 26, "网易云音乐", 28, kAccent);
+    if (!nickname_.empty()) {
+        ui_.text(32, 66, utf8Truncate(nickname_, 16), 16, kSub);
+    }
+
+    const char *items[] = {"每日推荐", "我的歌单", "搜索"};
+    for (int i = 0; i < 3; ++i) {
+        int y = 128 + i * 58;
+        if (tab_ == i) {
+            ui_.rect(16, y - 10, 268, 48, kRowSelected);
+            ui_.rect(16, y - 10, 4, 48, kAccent);
+        }
+        ui_.text(40, y, items[i], 21, tab_ == i ? kText : kSub);
+    }
+
+    ui_.text(32, 520, "A 确认   B 返回", 15, kSub);
+    ui_.text(32, 544, "X 暂停   Y 歌词", 15, kSub);
+    ui_.text(32, 568, "L/R 切歌  +/- 音量", 15, kSub);
+}
+
+void App::drawTrackRow(const Song &song, int index, int y, bool selected) {
+    if (selected) {
+        ui_.rect(320, y, 940, 52, kRowSelected);
+        ui_.rect(320, y, 4, 52, kAccent);
+    }
+
+    char number[16];
+    snprintf(number, sizeof(number), "%d", index + 1);
+    ui_.text(344, y + 8, number, 16, kSub);
+
+    ui_.text(392, y + 4, utf8Truncate(song.name, 34), 19, kText);
+    ui_.text(392, y + 28, utf8Truncate(song.artist, 30), 15, kSub);
+
+    ui_.textRight(1240, y + 14, formatDuration(song.duration_ms), 16, kSub);
+}
+
+void App::drawScrollbar(int x, int y, int height, int visible, int total, int first) {
+    if (total <= visible) return;
+    int bar_height = std::max(24, height * visible / total);
+    int max_first = std::max(1, total - visible);
+    int offset = (height - bar_height) * first / max_first;
+    ui_.rect(x, y + offset, 4, bar_height, rgba(90, 90, 100));
+}
+
+void App::drawHome() {
+    ui_.rect(kSidebarWidth, 0, 1280 - kSidebarWidth, kNowBarY, kBg);
+    drawSidebar();
+
+    const char *title = tab_ == 0 ? "每日推荐" : (tab_ == 1 ? "我的歌单" : "搜索");
+    ui_.text(340, 30, title, 26, kText);
+    ui_.text(340, 66, tab_ == 2 ? "按 A 打开键盘输入关键词" : "按 + 刷新", 15, kSub);
+
+    if (tab_ == 0) {
+        if (daily_.empty()) {
+            ui_.text(340, kListTop + 20, "暂无数据，按 + 刷新", 18, kSub);
+            return;
+        }
+        for (int i = 0; i < kVisibleRows; ++i) {
+            int index = daily_scroll_ + i;
+            if (index >= (int)daily_.size()) break;
+            drawTrackRow(daily_[index], index, kListTop + i * kRowHeight,
+                         index == daily_sel_);
+        }
+        drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows,
+                      (int)daily_.size(), daily_scroll_);
+    } else if (tab_ == 1) {
+        if (playlists_.empty()) {
+            ui_.text(340, kListTop + 20, "暂无歌单，按 + 刷新", 18, kSub);
+            return;
+        }
+        for (int i = 0; i < kVisibleRows; ++i) {
+            int index = playlist_scroll_ + i;
+            if (index >= (int)playlists_.size()) break;
+            const Playlist &p = playlists_[index];
+            int y = kListTop + i * kRowHeight;
+            bool selected = index == playlist_sel_;
+            if (selected) {
+                ui_.rect(320, y, 940, 52, kRowSelected);
+                ui_.rect(320, y, 4, 52, kAccent);
+            }
+            ui_.text(344, y + 12, utf8Truncate(p.name, 32), 19, kText);
+            char count[48];
+            snprintf(count, sizeof(count), "%d 首", p.track_count);
+            ui_.textRight(1240, y + 14, count, 16, kSub);
+        }
+        drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows,
+                      (int)playlists_.size(), playlist_scroll_);
+    } else {
+        ui_.text(340, kListTop + 20, "搜索歌曲、歌手或专辑", 18, kSub);
+        ui_.text(340, kListTop + 52, "按 A 调出系统键盘", 16, kSub);
+    }
+}
+
+void App::drawPlaylist() {
+    ui_.rect(kSidebarWidth, 0, 1280 - kSidebarWidth, kNowBarY, kBg);
+    drawSidebar();
+
+    ui_.text(340, 30, utf8Truncate(tracks_title_, 28), 26, kText);
+    char count[64];
+    snprintf(count, sizeof(count), "%d 首    B 返回", (int)tracks_.size());
+    ui_.text(340, 66, count, 15, kSub);
+
+    if (tracks_.empty()) {
+        ui_.text(340, kListTop + 20, "暂无歌曲", 18, kSub);
+        return;
+    }
+
+    for (int i = 0; i < kVisibleRows; ++i) {
+        int index = track_scroll_ + i;
+        if (index >= (int)tracks_.size()) break;
+        drawTrackRow(tracks_[index], index, kListTop + i * kRowHeight, index == track_sel_);
+    }
+
+    drawScrollbar(1264, kListTop, kVisibleRows * kRowHeight, kVisibleRows, (int)tracks_.size(),
+                  track_scroll_);
+}
+
+void App::drawNowBar() {
+    ui_.rect(0, kNowBarY, 1280, 720 - kNowBarY, kPanelBg);
+    ui_.rect(0, kNowBarY, 1280, 1, rgba(50, 50, 58));
+
+    if (player_.state() == Player::State::Idle) {
+        ui_.text(32, kNowBarY + 30, "未在播放", 18, kSub);
+        return;
+    }
+
+    ui_.text(32, kNowBarY + 12, utf8Truncate(player_.title(), 26), 20, kText);
+    ui_.text(32, kNowBarY + 42, utf8Truncate(player_.artist(), 30), 15, kSub);
+
+    const char *state_text = "";
+    switch (player_.state()) {
+    case Player::State::Loading: state_text = "缓冲中…"; break;
+    case Player::State::Playing: state_text = "正在播放"; break;
+    case Player::State::Paused: state_text = "已暂停"; break;
+    case Player::State::Error: state_text = "播放失败"; break;
+    case Player::State::Finished: state_text = "播放结束"; break;
+    default: break;
+    }
+    ui_.text(32, kNowBarY + 62, state_text, 14, kSub);
+
+    double position = player_.position();
+    double duration = player_.duration();
+    double ratio = duration > 0 ? position / duration : 0.0;
+    ratio = std::clamp(ratio, 0.0, 1.0);
+
+    int bar_x = 420;
+    int bar_w = 780;
+    int bar_y = kNowBarY + 44;
+    ui_.rect(bar_x, bar_y, bar_w, 6, rgba(60, 60, 68));
+    ui_.rect(bar_x, bar_y, (int)(bar_w * ratio), 6, kAccent);
+
+    ui_.text(bar_x, bar_y + 12, formatTime(position), 14, kSub);
+    ui_.textRight(bar_x + bar_w, bar_y + 12, formatTime(duration), 14, kSub);
+
+    char volume[32];
+    snprintf(volume, sizeof(volume), "音量 %d%%", (int)(player_.volume() * 100));
+    ui_.textRight(1240, kNowBarY + 12, volume, 15, kSub);
+}
+
+void App::drawLyrics() {
+    ui_.rect(kSidebarWidth, 0, 1280 - kSidebarWidth, kNowBarY, rgba(12, 12, 16, 240));
+    ui_.text(kSidebarWidth + 40, 24, "歌词", 24, kText);
+
+    if (lyrics_.empty()) {
+        ui_.textCentered(kSidebarWidth + (1280 - kSidebarWidth) / 2, 300, "暂无歌词", 22, kSub);
+        return;
+    }
+
+    double position = player_.position();
+    int current = 0;
+    for (int i = 0; i < (int)lyrics_.size(); ++i) {
+        if (lyrics_[i].time <= position + 0.2) current = i;
+        else break;
+    }
+
+    int cx = kSidebarWidth + 40;
+    int width = 1280 - kSidebarWidth - 120;
+    int center_y = 320;
+    int line_height = 44;
+
+    for (int offset = -3; offset <= 4; ++offset) {
+        int index = current + offset;
+        if (index < 0 || index >= (int)lyrics_.size()) continue;
+        int y = center_y + offset * line_height;
+        uint32_t color = offset == 0 ? kText : rgba(120, 120, 132);
+        int size = offset == 0 ? 24 : 18;
+        ui_.textWrapped(cx, y, width, lyrics_[index].text, size, color, line_height);
+    }
+}
+
+void App::drawLogin() {
+    ui_.clear(kBg);
+    ui_.textCentered(640, 74, "网易云音乐", 44, kAccent);
+    ui_.textCentered(640, 136, "Nintendo Switch 客户端", 18, kSub);
+
+    int card_x = 460;
+    int card_y = 190;
+    int card_size = 340;
+    ui_.rect(card_x, card_y, card_size, card_size, kWhite);
+
+    if (!qr_url_.empty()) {
+        using qrcodegen::QrCode;
+        QrCode qr = QrCode::encodeText(qr_url_.c_str(), QrCode::Ecc::LOW);
+        int modules = qr.getSize();
+        int scale = std::max(1, 300 / modules);
+        int total = modules * scale;
+        int ox = card_x + (card_size - total) / 2;
+        int oy = card_y + (card_size - total) / 2;
+        for (int y = 0; y < modules; ++y) {
+            for (int x = 0; x < modules; ++x) {
+                if (qr.getModule(x, y)) {
+                    ui_.rect(ox + x * scale, oy + y * scale, scale, scale, rgba(0, 0, 0));
+                }
+            }
+        }
+    }
+
+    std::string status;
+    switch (qr_code_) {
+    case 800: status = "请使用网易云音乐 App 扫描二维码"; break;
+    case 801: status = "已扫描，请在手机上确认登录"; break;
+    case 802: status = "二维码已过期，按 A 刷新"; break;
+    case 803: status = "登录成功"; break;
+    default: status = "正在获取二维码…"; break;
+    }
+    ui_.textCentered(640, 556, status, 20, kText);
+
+    if (qr_key_.empty()) {
+        ui_.textCentered(640, 590, "网络连接失败，按 A 重试", 16, kAccent);
+    } else {
+        ui_.textCentered(640, 590, "二维码有效期约 5 分钟", 15, kSub);
+    }
+}
+
+void App::drawToast() {
+    if (toast_text_.empty()) return;
+    if (clockSeconds() > toast_until_) {
+        toast_text_.clear();
+        return;
+    }
+    int width = ui_.textWidth(toast_text_, 17);
+    int box_w = std::min(1100, width + 48);
+    int x = (1280 - box_w) / 2;
+    int y = show_lyrics_ ? 596 : 596;
+    ui_.rect(x, y, box_w, 44, rgba(40, 40, 48, 235));
+    ui_.textCentered(640, y + 11, toast_text_, 17, kText);
+}
+
+} // namespace ntv

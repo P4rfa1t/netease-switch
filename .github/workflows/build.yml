@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH
+          make -j"$(nproc)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netease-switch-nro
+          path: netease-switch.nro
+          if-no-files-found: error

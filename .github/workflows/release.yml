@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH=$DEVKITPRO/tools/bin:$DEVKITPRO/devkitA64/bin:$PATH
+          make -j"$(nproc)"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: netease-switch.nro
+          generate_release_notes: true
