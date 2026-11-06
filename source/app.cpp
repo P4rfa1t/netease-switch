@@ -1459,6 +1459,10 @@ void App::openHomeCard(const HomeCard &card) {
         if (card.id != 0) openPlaylist(card.id, card.title);
         else toast("歌单信息不完整");
     } else if (rt == "dailySongs") {
+        if (daily_.empty()) {
+            redrawNow();
+            api_.dailySongs(daily_);
+        }
         if (!daily_.empty()) {
             tracks_ = daily_;
             tracks_title_ = "每日推荐";
@@ -1509,11 +1513,17 @@ void App::activateCard() {
         if (card_index_ == 0) {
             screen_ = Screen::Player;
         } else if (card_index_ == 2) {
+            if (daily_.empty()) {
+                redrawNow();
+                api_.dailySongs(daily_);
+            }
             if (!daily_.empty()) {
+                tracks_ = daily_;
+                tracks_title_ = "每日推荐";
+                tracks_cover_ = daily_[0].cover_url;
+                track_sel_ = 0;
                 play_queue_ = daily_;
-                playing_index_ = 0;
-                playSong(daily_[0]);
-                screen_ = Screen::Player;
+                screen_ = Screen::Playlist;
             } else {
                 toast("每日推荐为空");
             }
