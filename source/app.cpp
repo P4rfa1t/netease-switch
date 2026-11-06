@@ -933,24 +933,42 @@ void App::handleTap(float x, float y) {
 
     // ---------- home ----------
     if (page_ == Page::Recommend) {
-        // four feature cards
-        if (y >= 186 && y <= 486) {
-            int idx = (int)((x - 56) / 308);
-            if (idx >= 0 && idx < 4) {
-                card_index_ = idx;
-                nav_focused_ = false;
-                activateCard();
-                return;
+        if (home_blocks_.empty()) {
+            // Fixed four-card fallback layout.
+            if (y >= 186 && y <= 486) {
+                int idx = (int)((x - 56) / 308);
+                if (idx >= 0 && idx < 4) {
+                    card_index_ = idx;
+                    nav_focused_ = false;
+                    activateCard();
+                }
             }
+            return;
         }
-        // recommended playlist row
-        if (y >= 606 && y <= 700) {
-            int idx = (int)((x - 56) / 238);
-            if (idx >= 0 && idx < (int)discover_playlists_.size()) {
-                const Playlist &p = discover_playlists_[idx];
-                openPlaylist(p.id, p.name);
+
+        // Walk the same geometry the renderer used to find the tapped card.
+        int cy = 112;
+        for (size_t bi = 0; bi < home_blocks_.size() && cy < 700; ++bi) {
+            const HomeBlock &blk = home_blocks_[bi];
+
+            int card_w = 200, card_h = 200, gap = 20, per_row = 5;
+            if (blk.showType == "BIG_CARD") { card_w = 300; card_h = 300; per_row = 4; }
+            else if (blk.showType == "MUSIC") { card_w = 300; card_h = 110; per_row = 4; }
+            else if (blk.showType == "GREETING") { card_w = 260; card_h = 90; per_row = 4; }
+            else if (blk.showType == "RECENT_PLAYLIST") { card_w = 150; card_h = 150; per_row = 6; }
+            else if (blk.showType == "SONG_LIST_TOPLIST") { card_w = 240; card_h = 160; per_row = 5; }
+
+            if (blk.showType == "GREETING") cy += 66;
+            else if (!blk.title.empty()) cy += 40;
+
+            if (y >= cy && y <= cy + card_h) {
+                int idx = (int)((x - 56) / (card_w + gap));
+                if (idx >= 0 && idx < per_row && idx < (int)blk.cards.size()) {
+                    openHomeCard(blk.cards[idx]);
+                }
                 return;
             }
+            cy += card_h + 34;
         }
         return;
     }
@@ -1213,6 +1231,30 @@ void App::pollInput() {
         return;
     }
 
+    if (page_ == Page::Recommend && !home_blocks_.empty()) {
+        // Focus lives on (block row, card column).
+        int row = prop_row_, col = prop_col_;
+        int row_cards = (row < (int)home_blocks_.size())
+                            ? (int)home_blocks_[row].cards.size() : 0;
+
+        if (pressed(HidNpadButton_Up)) {
+            if (row > 0) { --prop_row_; prop_col_ = 0; }
+            else nav_focused_ = true;
+            return;
+        }
+        if (pressed(HidNpadButton_Down)) {
+            if (row + 1 < (int)home_blocks_.size()) { ++prop_row_; prop_col_ = 0; }
+            return;
+        }
+        if (pressedRepeat(HidNpadButton_Left) && col > 0) --prop_col_;
+        if (pressedRepeat(HidNpadButton_Right) && col + 1 < row_cards) ++prop_col_;
+        if (pressed(HidNpadButton_A) && row < (int)home_blocks_.size() &&
+            prop_col_ < (int)home_blocks_[row].cards.size()) {
+            openHomeCard(home_blocks_[row].cards[prop_col_]);
+        }
+        return;
+    }
+
     const int cols = (page_ == Page::Mine) ? 3 : 4;
     const int rows = (page_ == Page::Mine) ? 2 : 1;
     const int total = cols * rows;
@@ -1319,6 +1361,58 @@ void App::drawTopBar() {
                             rgba(255, 255, 255, 60), 1);
         }
         x += 150;
+    }
+}
+
+void App::openHomeCard(const HomeCard &card) {
+    const std::string &rt = card.resourceType;
+
+    if (rt == "playlist" || rt == "playList" || rt == "PLAYLIST") {
+        if (card.id != 0) openPlaylist(card.id, card.title);
+        else toast("歌单信息不完整");
+    } else if (rt == "dailySongs") {
+        if (!daily_.empty()) {
+            tracks_ = daily_;
+            tracks_title_ = "每日推荐";
+            tracks_cover_ = daily_[0].cover_url;
+            track_sel_ = 0;
+            play_queue_ = daily_;
+            screen_ = Screen::Playlist;
+        } else {
+            toast("每日推荐为空");
+        }
+    } else if (rt == "album") {
+        std::vector<Song> songs;
+        std::string name, cover;
+        redrawNow();
+        if (api_.albumSongs(card.id, songs, name, cover)) {
+            tracks_ = songs;
+            tracks_title_ = name.empty() ? card.title : name;
+            tracks_cover_ = cover;
+            track_sel_ = 0;
+            play_queue_ = songs;
+            screen_ = Screen::Playlist;
+        } else {
+            toast("专辑加载失败");
+        }
+    } else if (rt == "artist") {
+        std::vector<Song> songs;
+        std::string name;
+        redrawNow();
+        if (api_.artistHotSongs(card.id, songs, name)) {
+            tracks_ = songs;
+            tracks_title_ = name.empty() ? card.title : name;
+            tracks_cover_ = songs.empty() ? "" : songs[0].cover_url;
+            track_sel_ = 0;
+            play_queue_ = songs;
+            screen_ = Screen::Playlist;
+        } else {
+            toast("歌手加载失败");
+        }
+    } else if (!card.target.empty()) {
+        toast("暂不支持该类型的跳转");
+    } else {
+        toast("该内容暂不可用");
     }
 }
 
@@ -1841,7 +1935,7 @@ void App::drawHome() {
                         ui_.text(x + 14, y + card_h - 24, utf8Truncate(card.subtitle, 15), 13, kTextDim);
                 }
 
-                if (bi == 0 && i == 0 && !nav_focused_) {
+                if (!nav_focused_ && (int)bi == prop_row_ && i == prop_col_) {
                     ui_.rectOutline(x - 4, y - 4, card_w + 8, card_h + 8, kAccent, 3);
                 }
                 requestCover(card.cover);

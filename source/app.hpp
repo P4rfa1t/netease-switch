@@ -104,6 +104,7 @@ private:
     static void coverThreadEntry(void *arg);
     void switchPage(Page page);
     void activateCard();
+    void openHomeCard(const HomeCard &card);
     void loadDiscover();
     int cardColumns() const { return 5; }
     int cardWidth() const { return 220; }
@@ -198,7 +199,9 @@ private:
     // ---- top tab bar + card grid (TV layout) ----
     Page page_ = Page::Recommend;
     int nav_index_ = 0;              // focused top tab
-    int card_index_ = 0;             // focused card in the grid
+    int card_index_ = 0;
+    int prop_row_ = 0;
+    int prop_col_ = 0;             // focused card in the grid
     int card_scroll_ = 0;
     bool nav_focused_ = true;
     std::set<std::string> cover_queued_;
