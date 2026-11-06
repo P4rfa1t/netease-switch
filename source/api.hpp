@@ -74,6 +74,8 @@ public:
     bool playlistDetail(uint64_t id, std::vector<Song> &out, std::string &name);
     bool songUrl(uint64_t id, int br, std::string &url, std::string &error);
     bool lyric(uint64_t id, std::string &lrc, std::string &translated);
+    bool lyricFull(uint64_t id, std::string &lrc, std::string &translated,
+                   std::string &roman);
     bool search(const std::string &keyword, std::vector<Song> &out);
     bool likeSong(uint64_t id, bool like);
 

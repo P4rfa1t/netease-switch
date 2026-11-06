@@ -26,6 +26,7 @@ struct LyricLine {
     double time = 0;
     std::string text;
     std::string translation;
+    std::string roman;
 };
 
 class App {

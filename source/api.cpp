@@ -454,6 +454,20 @@ bool NetEaseApi::lyric(uint64_t id, std::string &lrc, std::string &translated) {
     return !lrc.empty();
 }
 
+bool NetEaseApi::lyricFull(uint64_t id, std::string &lrc, std::string &translated,
+                           std::string &roman) {
+    auto j = call("song/lyric",
+                  {{"id", std::to_string(id)},
+                   {"lv", "-1"}, {"kv", "-1"}, {"tv", "-1"}, {"rv", "-1"}});
+    lrc.clear();
+    translated.clear();
+    roman.clear();
+    if (j.contains("lrc") && j["lrc"].is_object()) lrc = jsonStr(j["lrc"], "lyric");
+    if (j.contains("tlyric") && j["tlyric"].is_object()) translated = jsonStr(j["tlyric"], "lyric");
+    if (j.contains("romalrc") && j["romalrc"].is_object()) roman = jsonStr(j["romalrc"], "lyric");
+    return !lrc.empty();
+}
+
 bool NetEaseApi::search(const std::string &keyword, std::vector<Song> &out) {
     auto j = call("search/tv/song/get", nlohmann::json(),
                   {{"keyword", keyword}, {"scene", "normal"}, {"trialMode", "0"},

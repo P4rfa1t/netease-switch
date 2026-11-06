@@ -746,10 +746,12 @@ void App::loadLyrics(uint64_t song_id) {
 
     std::string lrc;
     std::string translated;
-    if (!api_.lyric(song_id, lrc, translated)) return;
+    std::string roman;
+    if (!api_.lyricFull(song_id, lrc, translated, roman)) return;
 
     auto main_lines = parseLrc(lrc);
     auto sub_lines = parseLrc(translated);
+    auto roman_lines = parseLrc(roman);
 
     for (const auto &line : main_lines) {
         LyricLine entry;
@@ -758,6 +760,12 @@ void App::loadLyrics(uint64_t song_id) {
         for (const auto &sub : sub_lines) {
             if (std::fabs(sub.first - line.first) < 0.35 && sub.second != line.second) {
                 entry.translation = sub.second;
+                break;
+            }
+        }
+        for (const auto &rm : roman_lines) {
+            if (std::fabs(rm.first - line.first) < 0.35) {
+                entry.roman = rm.second;
                 break;
             }
         }
@@ -2322,11 +2330,17 @@ void App::drawLyrics() {
         int size = offset == 0 ? 24 : 18;
         ui_.textWrapped(cx, y, width, lyrics_[index].text, size, color, line_height);
 
+        int sub_y = y + (offset == 0 ? 32 : 26);
+        if (!lyrics_[index].roman.empty()) {
+            uint32_t c = offset == 0 ? rgba(170, 170, 185) : rgba(90, 90, 102);
+            ui_.textWrapped(cx, sub_y, width, lyrics_[index].roman, offset == 0 ? 15 : 12,
+                            c, line_height);
+            sub_y += offset == 0 ? 24 : 20;
+        }
         if (!lyrics_[index].translation.empty()) {
-            uint32_t sub_color = offset == 0 ? rgba(210, 210, 220) : rgba(100, 100, 112);
-            int sub_size = offset == 0 ? 18 : 14;
-            ui_.textWrapped(cx, y + (offset == 0 ? 32 : 26), width,
-                            lyrics_[index].translation, sub_size, sub_color, line_height);
+            uint32_t c = offset == 0 ? rgba(210, 210, 220) : rgba(100, 100, 112);
+            ui_.textWrapped(cx, sub_y, width, lyrics_[index].translation,
+                            offset == 0 ? 18 : 14, c, line_height);
         }
     }
 }
