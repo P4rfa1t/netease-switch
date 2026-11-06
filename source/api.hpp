@@ -39,6 +39,13 @@ struct HomeCard {
     int track_count = 0;
 };
 
+struct Artist {
+    uint64_t id = 0;
+    std::string name;
+    std::string avatar;
+    int track_count = 0;
+};
+
 struct HomeBlock {
     std::string showType;       // GREETING / BIG_CARD / PLAYLIST / MUSIC / ...
     std::string title;
@@ -76,6 +83,8 @@ public:
     bool artistHotSongs(uint64_t artist_id, std::vector<Song> &out, std::string &name);
     bool playlistSquare(std::vector<Playlist> &out);
     bool homeBlocks(std::vector<HomeBlock> &out);
+    bool followedArtists(std::vector<Artist> &out, std::string &error);
+    bool collectedAlbums(std::vector<Playlist> &out, std::string &error);
 
     std::string deviceId() const { return device_id_; }
     void setMusicU(const std::string &value);

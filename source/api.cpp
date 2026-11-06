@@ -610,4 +610,69 @@ bool NetEaseApi::homeBlocks(std::vector<HomeBlock> &out) {
     return !out.empty();
 }
 
+bool NetEaseApi::followedArtists(std::vector<Artist> &out, std::string &error) {
+    auto j = call("user/follow/users/mixed/get/v2", nlohmann::json(),
+                  {{"page", "0"}, {"scene", "1"}, {"sortType", "0"}, {"limit", "100"}});
+    out.clear();
+    int code = (int)jsonInt(j, "code", -1);
+    if (code != 200) {
+        error = "关注歌手接口不可用（code " + std::to_string(code) + "）";
+        return false;
+    }
+
+    const nlohmann::json *arr = nullptr;
+    if (j.contains("data") && j["data"].is_object()) {
+        if (j["data"].contains("artists")) arr = &j["data"]["artists"];
+        else if (j["data"].contains("list")) arr = &j["data"]["list"];
+    } else if (j.contains("data") && j["data"].is_array()) {
+        arr = &j["data"];
+    }
+    if (!arr || !arr->is_array()) {
+        error = "关注歌手暂无数据";
+        return false;
+    }
+
+    for (const auto &item : *arr) {
+        if (!item.is_object()) continue;
+        const nlohmann::json &src = (item.contains("artist") && item["artist"].is_object())
+                                        ? item["artist"] : item;
+        Artist a;
+        a.id = (uint64_t)jsonInt(src, "id");
+        a.name = jsonStr(src, "name");
+        a.avatar = jsonStr(src, "picUrl");
+        if (a.avatar.empty()) a.avatar = jsonStr(src, "img1v1Url");
+        if (a.avatar.empty()) a.avatar = jsonStr(src, "avatarUrl");
+        if (a.id != 0) out.push_back(a);
+    }
+    if (out.empty()) error = "还没有关注的歌手";
+    return !out.empty();
+}
+
+bool NetEaseApi::collectedAlbums(std::vector<Playlist> &out, std::string &error) {
+    auto j = call("album/sublist", nlohmann::json(), {{"limit", "100"}, {"offset", "0"}});
+    out.clear();
+    int code = (int)jsonInt(j, "code", -1);
+    if (code != 200) {
+        error = "收藏专辑接口不可用（code " + std::to_string(code) + "）";
+        return false;
+    }
+    const nlohmann::json *arr = nullptr;
+    if (j.contains("data") && j["data"].is_array()) arr = &j["data"];
+    else if (j.contains("albums") && j["albums"].is_array()) arr = &j["albums"];
+    if (!arr) { error = "暂无收藏专辑"; return false; }
+
+    for (const auto &item : *arr) {
+        if (!item.is_object()) continue;
+        Playlist p;
+        p.id = (uint64_t)jsonInt(item, "id");
+        p.name = jsonStr(item, "name");
+        p.cover_url = jsonStr(item, "picUrl");
+        p.creator = jsonStr(item, "artistName");
+        p.track_count = (int)jsonInt(item, "size");
+        if (p.id != 0) out.push_back(p);
+    }
+    if (out.empty()) error = "暂无收藏专辑";
+    return !out.empty();
+}
+
 } // namespace ntv

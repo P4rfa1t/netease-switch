@@ -973,6 +973,32 @@ void App::handleTap(float x, float y) {
         return;
     }
 
+    if (show_artists_) {
+        if (!artists_.empty() && y >= 172) {
+            const int cols = 6, cw = 160, gap = 22;
+            int c = (int)((x - 56) / (cw + gap));
+            int r = (y - 172) / 230;
+            if (c >= 0 && c < cols && r >= 0) {
+                int index = r * cols + c;
+                if (index < (int)artists_.size()) artist_sel_ = index;
+            }
+        }
+        return;
+    }
+
+    if (show_albums_) {
+        if (!albums_.empty() && y >= 172) {
+            const int cols = 5, cw = 200, gap = 24;
+            int c = (int)((x - 56) / (cw + gap));
+            int r = (y - 172) / 262;
+            if (c >= 0 && c < cols && r >= 0) {
+                int index = r * cols + c;
+                if (index < (int)albums_.size()) album_sel_ = index;
+            }
+        }
+        return;
+    }
+
     if (show_toplists_) {
         if (y >= 172) {
             const int cols = 5, cw = 220, gap = 20;
@@ -1159,6 +1185,58 @@ void App::pollInput() {
         return;
     }
 
+    if (show_artists_) {
+        if (!artists_.empty()) {
+            if (pressed(HidNpadButton_Left) && artist_sel_ % 6 > 0) --artist_sel_;
+            if (pressed(HidNpadButton_Right) && artist_sel_ + 1 < (int)artists_.size()) ++artist_sel_;
+            if (pressed(HidNpadButton_Down) && artist_sel_ + 6 < (int)artists_.size()) artist_sel_ += 6;
+            if (pressed(HidNpadButton_Up) && artist_sel_ >= 6) artist_sel_ -= 6;
+            if (pressed(HidNpadButton_A)) {
+                const Artist &a = artists_[artist_sel_];
+                std::vector<Song> songs;
+                std::string name;
+                redrawNow();
+                if (api_.artistHotSongs(a.id, songs, name)) {
+                    tracks_ = songs;
+                    tracks_title_ = name.empty() ? a.name : name;
+                    tracks_cover_ = songs.empty() ? "" : songs[0].cover_url;
+                    track_sel_ = 0;
+                    play_queue_ = songs;
+                    show_artists_ = false;
+                    screen_ = Screen::Playlist;
+                } else toast("歌手歌曲加载失败");
+            }
+        }
+        if (pressed(HidNpadButton_B)) { show_artists_ = false; screen_ = Screen::Home; }
+        return;
+    }
+
+    if (show_albums_) {
+        if (!albums_.empty()) {
+            if (pressed(HidNpadButton_Left) && album_sel_ % 5 > 0) --album_sel_;
+            if (pressed(HidNpadButton_Right) && album_sel_ + 1 < (int)albums_.size()) ++album_sel_;
+            if (pressed(HidNpadButton_Down) && album_sel_ + 5 < (int)albums_.size()) album_sel_ += 5;
+            if (pressed(HidNpadButton_Up) && album_sel_ >= 5) album_sel_ -= 5;
+            if (pressed(HidNpadButton_A)) {
+                const Playlist &al = albums_[album_sel_];
+                std::vector<Song> songs;
+                std::string name, cover;
+                redrawNow();
+                if (api_.albumSongs(al.id, songs, name, cover)) {
+                    tracks_ = songs;
+                    tracks_title_ = name.empty() ? al.name : name;
+                    tracks_cover_ = cover;
+                    track_sel_ = 0;
+                    play_queue_ = songs;
+                    show_albums_ = false;
+                    screen_ = Screen::Playlist;
+                } else toast("专辑歌曲加载失败");
+            }
+        }
+        if (pressed(HidNpadButton_B)) { show_albums_ = false; screen_ = Screen::Home; }
+        return;
+    }
+
     if (show_toplists_) {
         const int cols = 5;
         int total = (int)toplists_.size();
@@ -1316,7 +1394,9 @@ void App::draw() {
         drawLogin();
         break;
     case Screen::Home:
-        if (show_toplists_) drawToplistPage();
+        if (show_artists_) drawArtistPage();
+        else if (show_albums_) drawAlbumPage();
+        else if (show_toplists_) drawToplistPage();
         else if (show_playlist_grid_) drawMineGrid();
         else drawHome();
         break;
@@ -1477,9 +1557,23 @@ void App::activateCard() {
                 toast("排行榜加载失败");
             }
         } else if (card_index_ == 4) {
-            toast("关注歌手需要额外权限，当前会话不可用");
+            std::vector<Artist> list;
+            std::string err;
+            redrawNow();
+            page_note_.clear();
+            if (api_.followedArtists(list, err)) artists_ = list;
+            else page_note_ = err;
+            artist_sel_ = 0;
+            show_artists_ = true;
         } else {
-            toast("收藏视频暂未实现");
+            std::vector<Playlist> list;
+            std::string err;
+            redrawNow();
+            page_note_.clear();
+            if (api_.collectedAlbums(list, err)) albums_ = list;
+            else page_note_ = err;
+            album_sel_ = 0;
+            show_albums_ = true;
         }
     }
 
@@ -1658,6 +1752,62 @@ void App::drawPlaylistGrid(const std::vector<Playlist> &cards, int selected, int
                 ui_.text(x, y + kCardH + 34, meta, 13, kHint);
             }
         }
+    }
+}
+
+void App::drawArtistPage() {
+    ui_.rect(0, 0, 1280, 720, kBg);
+    drawTopBar();
+    ui_.text(56, 118, "关注的歌手", 34, kText);
+
+    if (!page_note_.empty()) {
+        ui_.textCentered(640, 340, page_note_, 20, kHint);
+        ui_.textCentered(640, 380, "B 返回", 15, kSub);
+        return;
+    }
+
+    const int cols = 6, cw = 160, gap = 22;
+    for (int i = 0; i < (int)artists_.size() && i < 12; ++i) {
+        int c = i % cols, r = i / cols;
+        int x = 56 + c * (cw + gap);
+        int y = 172 + r * 230;
+        const Artist &a = artists_[i];
+
+        ui_.circle(x + cw / 2, y + cw / 2, cw / 2, rgba(255, 255, 255, 14));
+        drawCover(a.avatar, x, y, cw, cw);
+        ui_.textCentered(x + cw / 2, y + cw + 14, utf8Truncate(a.name, 10), 17,
+                         i == artist_sel_ ? kText : kTextDim);
+
+        if (i == artist_sel_) ui_.rectOutline(x - 4, y - 4, cw + 8, cw + 8, kAccent, 3);
+        requestCover(a.avatar);
+    }
+}
+
+void App::drawAlbumPage() {
+    ui_.rect(0, 0, 1280, 720, kBg);
+    drawTopBar();
+    ui_.text(56, 118, "收藏专辑", 34, kText);
+
+    if (!page_note_.empty()) {
+        ui_.textCentered(640, 340, page_note_, 20, kHint);
+        ui_.textCentered(640, 380, "B 返回", 15, kSub);
+        return;
+    }
+
+    const int cols = 5, cw = 200, gap = 24;
+    for (int i = 0; i < (int)albums_.size() && i < 10; ++i) {
+        int c = i % cols, r = i / cols;
+        int x = 56 + c * (cw + gap);
+        int y = 172 + r * 262;
+        const Playlist &al = albums_[i];
+
+        drawCover(al.cover_url, x, y, cw, cw);
+        ui_.text(x, y + cw + 10, utf8Truncate(al.name, 12), 17,
+                 i == album_sel_ ? kText : kTextDim);
+        if (!al.creator.empty()) ui_.text(x, y + cw + 34, utf8Truncate(al.creator, 14), 13, kHint);
+
+        if (i == album_sel_) ui_.rectOutline(x - 4, y - 4, cw + 8, cw + 8, kAccent, 3);
+        requestCover(al.cover_url);
     }
 }
 

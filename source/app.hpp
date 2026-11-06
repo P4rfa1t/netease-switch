@@ -95,6 +95,8 @@ private:
                           int top, const char *empty_hint);
     void drawPlayerPage();
     void drawToplistPage();
+    void drawArtistPage();
+    void drawAlbumPage();
     void drawCover(const std::string &url, int x, int y, int w, int h);
     SDL_Texture *iconTexture(const char *name);
     void drawIcon(const char *name, int x, int y, int w, int h);
@@ -226,6 +228,13 @@ private:
     bool collected_loaded_ = false;        // 0 = section tabs, 1 = grid
     bool show_playlist_grid_ = false;
     bool show_toplists_ = false;
+    bool show_artists_ = false;
+    bool show_albums_ = false;
+    std::vector<Artist> artists_;
+    std::vector<Playlist> albums_;
+    int artist_sel_ = 0;
+    int album_sel_ = 0;
+    std::string page_note_;
     int mine_scroll_ = 0;
     uint64_t viewed_playlist_id_ = 0;
 
